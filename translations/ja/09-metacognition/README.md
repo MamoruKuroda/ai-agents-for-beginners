@@ -13,8 +13,9 @@ CO_OP_TRANSLATOR_METADATA:
 
 # AIエージェントにおけるメタ認知
 
-## はじめに
+<!-- UPDATE_NOTE: 下記 code_samples 日本語版 09-semantic-kernel.ipynb を追加。英語版セル構成を踏襲し、コメントで要点補足。 -->
 
+## はじめに
 AIエージェントのメタ認知に関するレッスンへようこそ！この章は、自分自身の思考プロセスについてAIエージェントがどのように考えるかに興味を持つ初心者向けに設計されています。このレッスンを終える頃には、重要な概念を理解し、メタ認知をAIエージェント設計に応用するための実践的な例を身につけることができます。
 
 ## 学習目標
@@ -24,6 +25,26 @@ AIエージェントのメタ認知に関するレッスンへようこそ！こ
 1. エージェント定義における推論ループの意味を理解する。
 2. 自己修正型エージェントを支援するための計画と評価技術を使う。
 3. タスクを達成するためにコードを操作できるエージェントを作成する。
+
+### 全体の位置づけ（学習層の流れ）
+本レッスンは次の層が積み重なる中で「より自律的で説明可能なエージェント」へ至る流れのうち、メタ認知層を中心に扱います。
+
+| 層 | 主目的 | 観察対象 | 主な更新対象 | 評価粒度 | 代表ループ |
+|----|--------|----------|--------------|----------|------------|
+| 計画 | 目標をステップ列へ分解します | 目標/進行状況 | ステップ列 | 成否(粗) | plan→act |
+| 自己修正型RAG | 応答不足や誤りを補います | 回答品質/取得結果 | 追加取得条件/再プロンプト | 根拠有無/充足率 | retrieve→generate→evaluate |
+| 環境モデル | 継続参照する内部状態を保持します | preferences / avoid / change_log など | 状態フィールド | 一貫性/再利用率 | update→query |
+| SQL等構造化取得 | 条件単位で精緻にデータ取得します | 行数/重複/カバレッジ | WHERE/JOIN/投影列 | 行数適正/重複率/コスト | refine→run→log |
+| コード生成 | 戦略変更を再利用資産にします | 差分/テスト結果 | 関数/クエリ/評価コード | テスト合格率/改善率 | propose→patch→test |
+| メタ認知 | 戦略と内部状態を再評価し次サイクル方針を更新します | 戦略/状態/失敗傾向 | 嗜好/評価指標/回避条件 | 指標トレンド/失敗分類 | observe→reflect→revise |
+
+要点: 計画で行動列を作り、自己修正型RAGで応答を改善し、環境モデルに状態を保持し、SQLで取得条件を明確化し、コード生成で変更を資産化し、メタ認知で方針全体を再評価する循環で精度と説明可能性を段階的に高めます。
+
+補足:
+- 環境モデルは一時的推論結果と次サイクル改善判断を橋渡しします。これが無いと嗜好や失敗パターンが断片的になり再質問や無駄取得が増えます。
+- 自己修正型RAGは「応答」を改善し、メタ認知は「改善方針」を改善します。
+- コード生成はメタ認知で得た抽象判断を具体コードへ固定し差分検証を可能にします。
+- SQLは取得条件を明示し再現性と条件単位の改善検証を支えます。
 
 ## メタ認知の紹介
 
@@ -59,10 +80,10 @@ AIエージェントのメタ認知に関するレッスンへようこそ！こ
 
 ![Importance of Metacognition](../../../09-metacognition/images/importance-of-metacognition.png)
 
-- 自己反省：エージェントが自分のパフォーマンスを評価し、改善点を見つけることができる。
-- 適応性：過去の経験や変化する環境に基づいて戦略を修正できる。
-- エラー修正：自律的にエラーを検出し修正できるため、より正確な結果が得られる。
-- 資源管理：時間や計算資源などの使用を最適化するために行動を計画・評価できる。
+- 自己反省(Self-Reflection)：エージェントが自分のパフォーマンスを評価し、改善点を見つけることができる。
+- 適応性(Adaptability)：過去の経験や変化する環境に基づいて戦略を修正できる。
+- エラー修正(Error Correction)：自律的にエラーを検出し修正できるため、より正確な結果が得られる。
+- 資源管理(Resource Management)：時間や計算資源などの使用を最適化するために行動を計画・評価できる。
 
 ## AIエージェントの構成要素
 
@@ -79,6 +100,8 @@ AIエージェントのメタ認知に関するレッスンへようこそ！こ
 ### 例：旅行代理店サービスにおけるメタ認知
 
 AIによって動く旅行代理店サービスを設計するとします。このエージェント「Travel Agent」はユーザーの休暇計画を支援します。メタ認知を組み込むには、自己認識や過去の経験に基づいて行動を評価・調整する必要があります。
+
+> 注: ここで列挙しているタスク分解やステップは「人間（設計者）が例示したもの」であり、この段階ではまだエージェント自身が動的に計画を生成しているわけではありません。後続の「計画」セクションで、メタ認知に基づくエージェント主体の計画（状態→評価→次行動選択）について説明しています。
 
 メタ認知が果たす役割の例：
 
@@ -114,45 +137,52 @@ Travel Agentのコードにメタ認知を組み込んだ簡単な例：
 ```python
 class Travel_Agent:
     def __init__(self):
+        # user_preferences: ユーザー嗜好を保持 (メタ認知=自己状態の明示保持)
+        # experience_data: フィードバック履歴 (振り返り/再評価用ログ)
         self.user_preferences = {}
         self.experience_data = []
 
     def gather_preferences(self, preferences):
+        # 初期嗜好の収集。
         self.user_preferences = preferences
 
     def retrieve_information(self):
-        # Search for flights, hotels, and attractions based on preferences
+        # メタ認知: 失敗回数やレスポンス品質スコアを内部に記録し再検索戦略を動的に変更
         flights = search_flights(self.user_preferences)
         hotels = search_hotels(self.user_preferences)
         attractions = search_attractions(self.user_preferences)
         return flights, hotels, attractions
 
     def generate_recommendations(self):
+        # 推論チェーン: 取得 → 統合 (create_itinerary)。
         flights, hotels, attractions = self.retrieve_information()
         itinerary = create_itinerary(flights, hotels, attractions)
         return itinerary
 
     def adjust_based_on_feedback(self, feedback):
+        # フィードバックを経験データに蓄積 (学習ログとして使用)。
         self.experience_data.append(feedback)
-        # Analyze feedback and adjust future recommendations
+        # adjust_preferences は純関数的に user_preferences を更新する想定で実装。
         self.user_preferences = adjust_preferences(self.user_preferences, feedback)
 
-# Example usage
+# 例: 使用方法 (Example usage)
 travel_agent = Travel_Agent()
 preferences = {
-    "destination": "Paris",
-    "dates": "2025-04-01 to 2025-04-10",
-    "budget": "moderate",
-    "interests": ["museums", "cuisine"]
+    "destination": "Paris",  # 目的地
+    "dates": "2025-04-01 to 2025-04-10",  # 旅行期間 (開始〜終了)
+    "budget": "moderate",  # 予算帯 (例: low / moderate / high)
+    "interests": ["museums", "cuisine"]  # 興味カテゴリ (メタ認知: 推薦理由の根拠データ)
 }
 travel_agent.gather_preferences(preferences)
 itinerary = travel_agent.generate_recommendations()
-print("Suggested Itinerary:", itinerary)
+print("提案旅程:", itinerary)
 feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
 travel_agent.adjust_based_on_feedback(feedback)
 ```
 
 #### メタ認知が重要な理由
+
+単一のLLMは基本的に「入力→一度きりの出力」の即時生成で内部の評価プロセスや継続的記憶が露出しませんが、メタ認知エージェントは目標・状態・評価結果を明示的に保持し (計画→実行→自己評価→調整) という反復ループを回すことで、説明可能性・自己修正精度・リソース効率を段階的に高められます。
 
 - **自己反省**：エージェントは自身のパフォーマンスを分析し、改善点を見つけることができる。
 - **適応性**：フィードバックや変化する条件に基づき戦略を修正できる。
@@ -163,8 +193,9 @@ travel_agent.adjust_based_on_feedback(feedback)
 
 ---
 
-## 2. エージェントにおける計画
+## 計画（メタ認知をもとに行動を計画する）
 
+ここでは前半で説明したメタ認知（自己状態の把握と評価）を、タスク達成の具体的なステップ作成つまり「計画」を行います。メタ認知が内省なら、計画はその結果を次の行動へ橋渡しする実行指針です。
 計画はAIエージェントの行動において重要な要素です。目標達成のために必要なステップを、現在の状況や資源、障害を考慮しながら整理します。
 
 ### 計画の要素
@@ -225,48 +256,98 @@ travel_agent.adjust_based_on_feedback(feedback)
 - 旅行前や旅行中に変更や追加の要望に対応できるようサポートを継続。
 - 例：「旅行中に何かお手伝いが必要な場合は、いつでもご連絡ください！」
 
-### 例：やり取りの例
+### 開発者向け実用例
 
 ```python
-class Travel_Agent:
+"""短縮版: plan -> act -> reflect -> revise の最小要素
+前半との違いは大きく3つ: (1) 明示 plan 生成 (2) フィードバックで再計算 (3) journal ログ
+余計な挿入ロジックは省き概念理解を最優先。
+"""
+from typing import Dict, Any, List
+
+def search_flights(prefs):
+    return [{"id": "F-001", "price": 520}]
+
+def search_hotels(prefs):
+    return [{"name": "Central Hotel", "score": 7.1}]
+
+def search_attractions(prefs):
+    return ["Louvre", "Seine Walk"]
+
+def create_itinerary(flights, hotels, attractions):
+    return {"flights": flights, "hotels": hotels, "attractions": attractions}
+
+def adjust(prefs, feedback):
+    if feedback.get("disliked"):
+        prefs.setdefault("avoid", []).extend(feedback["disliked"])
+    if feedback.get("liked"):
+        prefs.setdefault("favorites", []).extend(feedback["liked"])
+    return prefs
+
+class MiniPlanningAgent:
     def __init__(self):
-        self.user_preferences = {}
-        self.experience_data = []
+        self.prefs: Dict[str, Any] = {}
+        self.plan: List[str] = []
+        self.journal: List[Dict[str, Any]] = []
+        self.state: Dict[str, Any] = {}
 
-    def gather_preferences(self, preferences):
-        self.user_preferences = preferences
+    def gather_preferences(self, p):
+        self.prefs = p
 
-    def retrieve_information(self):
-        flights = search_flights(self.user_preferences)
-        hotels = search_hotels(self.user_preferences)
-        attractions = search_attractions(self.user_preferences)
-        return flights, hotels, attractions
+    def generate_plan(self):
+    # 計画生成(中枢): サブタスク列をここで定義
+        self.plan = [
+            "retrieve",      # 情報取得
+            "compose",       # 旅程組立
+            "feedback",      # フィードバック取得 (模擬)
+            "revise"         # 調整
+        ]
+        self._log("plan_created", {"plan": self.plan})
 
-    def generate_recommendations(self):
-        flights, hotels, attractions = self.retrieve_information()
-        itinerary = create_itinerary(flights, hotels, attractions)
-        return itinerary
+    def run(self, feedback=None):
+    # 実行ループ(中枢): plan を順に実行し内省/再計算を適用
+        for step in self.plan:
+            if step == "retrieve":
+                self.state["flights"] = search_flights(self.prefs)
+                self.state["hotels"] = search_hotels(self.prefs)
+                self.state["attractions"] = search_attractions(self.prefs)
+            elif step == "compose":
+                self.state["itinerary"] = create_itinerary(
+                    self.state["flights"], self.state["hotels"], self.state["attractions"]
+                )
+            elif step == "feedback":
+                self.state["feedback"] = feedback or {"liked": ["Louvre"], "disliked": []}
+            elif step == "revise":
+                adjust(self.prefs, self.state.get("feedback", {}))
+                # 再計算 (簡略: ホテルスコア + liked 数 *0.5 - disliked 数 *0.5)
+                base = self.state["hotels"][0]["score"]
+                fb = self.state.get("feedback", {})
+                score = base + 0.5*len(fb.get("liked", [])) - 0.5*len(fb.get("disliked", []))
+                self.state["score"] = round(score, 2)
+            self._log("step", {"name": step})
+        return self.state
 
-    def adjust_based_on_feedback(self, feedback):
-        self.experience_data.append(feedback)
-        self.user_preferences = adjust_preferences(self.user_preferences, feedback)
+    def _log(self, event, detail):
+        self.journal.append({"event": event, "detail": detail})
 
-# Example usage within a booing request
-travel_agent = Travel_Agent()
-preferences = {
-    "destination": "Paris",
-    "dates": "2025-04-01 to 2025-04-10",
-    "budget": "moderate",
-    "interests": ["museums", "cuisine"]
-}
-travel_agent.gather_preferences(preferences)
-itinerary = travel_agent.generate_recommendations()
-print("Suggested Itinerary:", itinerary)
-feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
-travel_agent.adjust_based_on_feedback(feedback)
+# 使用例
+agent = MiniPlanningAgent()
+agent.gather_preferences({
+    "destination": "Paris",  # 目的地
+    "dates": "2025-04-01 to 2025-04-10",  # 旅行期間 (開始〜終了)
+    "budget": "moderate",  # 予算帯 (例: low / moderate / high)
+    "interests": ["museums", "cuisine"]  # 興味カテゴリ
+})
+agent.generate_plan()
+result = agent.run(feedback={"liked": ["Louvre"], "disliked": ["Central Hotel (too noisy)"]})
+print("スコア:", result["score"])
+print("旅程キー一覧:", list(result["itinerary"].keys()))
+print("ログイベント:", [e["event"] for e in agent.journal])
 ```
 
-## 3. 補正型RAGシステム
+## 自己修正型RAGシステム
+
+> 用語統一: 本レッスンでは「自己修正型RAG」を使用します (英: Corrective / Self-Refining RAG)。RAGにフィードバック/評価ループを組み込み、取得・生成結果の誤りや不足を段階的に検出・改善する手法を指します。
 
 まずはRAGツールと先取りコンテキストロードの違いを理解しましょう。
 
@@ -278,72 +359,77 @@ RAGは検索システムと生成モデルを組み合わせたものです。�
 
 RAGシステムでは、エージェントが知識ベースから関連情報を取得し、それを使って適切な応答や行動を生成します。
 
-### 補正型RAGアプローチ
+### 自己修正型RAGアプローチ
 
-補正型RAGアプローチは、RAG技術を使ってエラーを修正し、AIエージェントの精度を向上させることに焦点を当てています。これには以下が含まれます：
+自己修正型RAGアプローチは、RAG技術に自己評価ループを組み合わせ、取得/生成過程での誤り・不足・曖昧さを段階的に検出し再取得や再プロンプトで改善していくことに焦点を当てています。これには以下が含まれます：
 
 1. **プロンプト技術**：エージェントが関連情報を取得するための特定のプロンプトを使用する。
 2. **ツール**：取得情報の関連性を評価し、正確な応答を生成するアルゴリズムや仕組みを実装する。
 3. **評価**：エージェントのパフォーマンスを継続的に評価し、精度と効率を改善するための調整を行う。
-例：検索エージェントにおける修正型RAG  
-ウェブから情報を取得してユーザーの質問に答える検索エージェントを考えます。修正型RAGのアプローチは以下を含むかもしれません：  
-1. **プロンプティング技術**：ユーザーの入力に基づいて検索クエリを作成する。  
-2. **ツール**：自然言語処理や機械学習アルゴリズムを使って検索結果をランキングおよびフィルタリングする。  
-3. **評価**：ユーザーフィードバックを分析し、取得情報の誤りを特定して修正する。  
 
-### 旅行代理店における修正型RAG  
-修正型RAG（Retrieval-Augmented Generation）は、AIが情報を取得・生成する能力を高めつつ、誤りを修正します。旅行代理店が修正型RAGを使ってより正確で関連性の高い旅行提案を行う方法を見てみましょう。  
-これには以下が含まれます：  
-- **プロンプティング技術：** エージェントが関連情報を取得する際に特定のプロンプトを使用する。  
-- **ツール：** 取得情報の関連性を評価し、正確な応答を生成するアルゴリズムや仕組みを実装する。  
-- **評価：** エージェントのパフォーマンスを継続的に評価し、精度と効率を改善するために調整を行う。  
+### 自己修正型RAGの代表例
 
-#### 旅行代理店における修正型RAG実装のステップ  
+自己修正型RAGは「取得→生成」一回で終わらず、評価/フィードバックで不足や誤差を検知し再取得・再生成を繰り返す枠組みです。代表的な適用シナリオを二つにまとめて示します。
+
+1. 検索エージェント: Web から根拠を取得し回答を生成。
+    - プロンプト技術: 質問を検索しやすいクエリに分解・拡張する。
+    - ツール: 検索結果をランキング/フィルタし重複を除去、引用用に整形する。
+    - 評価: 引用不足や矛盾があれば再取得・再生成する。
+2. 旅行プランニング（本例）: 嗜好と複数カテゴリ(フライト/ホテル/アクティビティ)を統合し旅程を反復改善。
+    - プロンプト技術: 目的地・期間・予算・興味タグをクエリ条件へマッピングする。
+    - ツール: カテゴリ別に候補を取得し旅程へ統合、基本制約(予算/時間)をチェックする。
+    - 評価: 満足度や興味カバレッジ、ユーザーフィードバック(liked/avoid)を反映して再検索・調整する。
+
+以下では上記の Travel Agent ケースを使って実装ステップを具体化します。
+
+> 計画セクションとの主な違い: ここでは「静的に立てた手順」ではなく、ユーザーフィードバック/評価指標を入力として再取得・再統合を行う反復(自己修正)ループに焦点を当てます。重要点は (1) 外部取得と内部状態の分離 (2) フィードバックを再検索条件へ即座に還元 (3) 再生成前に簡易評価を挟む ことです。
+
+#### 実装ステップ（Travel Agent例）  
 1. **初期ユーザーインタラクション**  
 - 旅行代理店は目的地、旅行日程、予算、興味などユーザーの初期希望を収集する。  
-- 例：```python
+```python
      preferences = {
          "destination": "Paris",
          "dates": "2025-04-01 to 2025-04-10",
          "budget": "moderate",
          "interests": ["museums", "cuisine"]
      }
-     ```  
+```  
 2. **情報の取得**  
 - 旅行代理店はユーザーの希望に基づいてフライト、宿泊施設、観光地、レストランの情報を取得する。  
-- 例：```python
+```python
      flights = search_flights(preferences)
      hotels = search_hotels(preferences)
      attractions = search_attractions(preferences)
-     ```  
+```  
 3. **初期推奨の生成**  
 - 旅行代理店は取得した情報を使ってパーソナライズされた旅程を生成する。  
-- 例：```python
+```python
      itinerary = create_itinerary(flights, hotels, attractions)
      print("Suggested Itinerary:", itinerary)
-     ```  
+```  
 4. **ユーザーフィードバックの収集**  
 - 旅行代理店は初期推奨に対するユーザーのフィードバックを求める。  
-- 例：```python
+```python
      feedback = {
          "liked": ["Louvre Museum"],
          "disliked": ["Eiffel Tower (too crowded)"]
      }
-     ```  
-5. **修正型RAGプロセス**  
-- **プロンプティング技術**：旅行代理店はユーザーフィードバックに基づいて新たな検索クエリを作成する。  
-- 例：```python
+```  
+5. **自己修正型RAGプロセス**  
+- **プロンプト技術**：旅行代理店はユーザーフィードバックに基づいて新たな検索クエリを作成する。  
+```python
        if "disliked" in feedback:
            preferences["avoid"] = feedback["disliked"]
-       ```  
+```  
 - **ツール**：旅行代理店はユーザーフィードバックに基づいて新しい検索結果をランキング・フィルタリングするアルゴリズムを使用する。  
-- 例：```python
+```python
        new_attractions = search_attractions(preferences)
        new_itinerary = create_itinerary(flights, hotels, new_attractions)
        print("Updated Itinerary:", new_itinerary)
-       ```  
+```  
 - **評価**：旅行代理店はユーザーフィードバックを分析し、推奨の関連性と正確性を継続的に評価し、必要な調整を行う。  
-- 例：```python
+```python
        def adjust_preferences(preferences, feedback):
            if "liked" in feedback:
                preferences["favorites"] = feedback["liked"]
@@ -352,554 +438,331 @@ RAGシステムでは、エージェントが知識ベースから関連情報�
            return preferences
 
        preferences = adjust_preferences(preferences, feedback)
-       ```  
+```  
 
 #### 実践例  
-以下は旅行代理店に修正型RAGアプローチを組み込んだ簡易的なPythonコード例です：  
+以下は自己修正型RAGの最小ループ (plan/act/feedback/revise + 簡易評価) を明示した Travel Agent の実装です。計画セクションとの差異はフィードバックを再検索条件へ即時反映し再生成前後でスコア評価を行う点です。  
 ```python
-class Travel_Agent:
+from typing import Dict, Any
+
+"""フェーズ対応表 (自己修正型RAG 最小ループ)
+plan    : SelfCorrectingTravelAgent.__init__ 内 self.plan 定義
+act     : run_once 内 retrieve / compose ステップ (外部取得と統合)
+feedback: run_once 内 feedback ステップ (ユーザ/模擬フィードバック受理)
+revise  : run_once 内 revise ステップ (prefs 更新 + 評価呼出)
+evaluate: _evaluate メソッド (興味カバレッジ + ホテルスコア) と revise からの呼び出し
+loop    : improve_until (閾値/最大反復制御による反復自己修正)
+状態伝播: prefs -> 検索関数(search_hotels/search_attractions) で avoid/favorites を反映し次反復に影響
+"""
+
+def search_flights(p):
+    return [{"id": "F1", "price": 500}]
+
+def search_hotels(p):
+    base = [{"name": "Central Hotel", "score": 7.2}]
+    # avoid が含まれる場合は簡易フィルタ (再取得例)
+    if p.get("avoid"):
+        return [h for h in base if all(a not in h["name"] for a in p["avoid"]) ] or base
+    return base
+
+def search_attractions(p):
+    data = ["Louvre Museum", "Seine Walk", "Eiffel Tower"]
+    if p.get("avoid"):
+        data = [d for d in data if all(a not in d for a in p["avoid"])]
+    return data[:2]
+
+def create_itinerary(flights, hotels, attractions):
+    return {"flights": flights, "hotels": hotels, "attractions": attractions}
+
+class SelfCorrectingTravelAgent:
     def __init__(self):
-        self.user_preferences = {}
-        self.experience_data = []
+        self.prefs: Dict[str, Any] = {}              # 内部状態(ユーザ嗜好)
+        self.plan = ["retrieve", "compose", "feedback", "revise"]  # plan: 明示的なサブタスク列
+        self.state: Dict[str, Any] = {}
+        self.score_history = []                      # 評価履歴 (自己修正の推移確認)
 
-    def gather_preferences(self, preferences):
-        self.user_preferences = preferences
+    def set_preferences(self, p):
+        self.prefs = p
 
-    def retrieve_information(self):
-        flights = search_flights(self.user_preferences)
-        hotels = search_hotels(self.user_preferences)
-        attractions = search_attractions(self.user_preferences)
-        return flights, hotels, attractions
+    def _evaluate(self):
+        # evaluate: 興味タグ一致数 + ホテルスコア で簡易スコア化 (説明可能な軽量指標)
+        interests = self.prefs.get("interests", [])
+        attractions = self.state.get("attractions", [])
+        cover = sum(1 for i in interests if any(i.lower().split()[0] in a.lower() for a in attractions))
+        hotel_score = self.state.get("hotels", [{}])[0].get("score", 0)
+        score = round(hotel_score + cover, 2)
+        self.state["score"] = score
+        self.score_history.append(score)
 
-    def generate_recommendations(self):
-        flights, hotels, attractions = self.retrieve_information()
-        itinerary = create_itinerary(flights, hotels, attractions)
-        return itinerary
+    def run_once(self, feedback=None):
+        for step in self.plan:
+            if step == "retrieve":
+                # act/retrieve: 外部情報取得 (次反復で avoid/favorites が影響)
+                self.state["flights"] = search_flights(self.prefs)
+                self.state["hotels"] = search_hotels(self.prefs)
+                self.state["attractions"] = search_attractions(self.prefs)
+            elif step == "compose":
+                # act/compose: 取得情報を統合し旅程構造化
+                self.state["itinerary"] = create_itinerary(
+                    self.state["flights"], self.state["hotels"], self.state["attractions"]
+                )
+            elif step == "feedback":
+                # feedback: ユーザ or 模擬フィードバックを状態に取り込む
+                self.state["feedback"] = feedback or {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower"]}
+            elif step == "revise":
+                # revise: フィードバックで prefs を更新し再取得条件を変化させる + 評価実施
+                fb = self.state.get("feedback", {})
+                # liked を favorites に、disliked を avoid に反映 (次回取得条件変化)
+                if fb.get("liked"): self.prefs.setdefault("favorites", []).extend(fb["liked"])
+                if fb.get("disliked"): self.prefs.setdefault("avoid", []).extend(fb["disliked"])
+                self._evaluate()
+        return self.state
 
-    def adjust_based_on_feedback(self, feedback):
-        self.experience_data.append(feedback)
-        self.user_preferences = adjust_preferences(self.user_preferences, feedback)
-        new_itinerary = self.generate_recommendations()
-        return new_itinerary
+    def improve_until(self, threshold=8.0, max_iters=3):
+    # loop: しきい値到達または最大反復まで自己修正サイクルを回す
+    for _ in range(max_iters):
+            self.run_once()
+            if self.state.get("score", 0) >= threshold:
+                break
+        return self.state
 
-# Example usage
-travel_agent = Travel_Agent()
-preferences = {
+# 使用例
+agent = SelfCorrectingTravelAgent()
+agent.set_preferences({
     "destination": "Paris",
     "dates": "2025-04-01 to 2025-04-10",
     "budget": "moderate",
     "interests": ["museums", "cuisine"]
-}
-travel_agent.gather_preferences(preferences)
-itinerary = travel_agent.generate_recommendations()
-print("Suggested Itinerary:", itinerary)
-feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
-new_itinerary = travel_agent.adjust_based_on_feedback(feedback)
-print("Updated Itinerary:", new_itinerary)
-```  
+})
+final_state = agent.improve_until(threshold=8.5)
+print("最終スコア:", final_state.get("score"))
+print("score履歴:", agent.score_history)
+print("avoid:", agent.prefs.get("avoid"))
+```
 
-### 先取りコンテキストロード  
-先取りコンテキストロードは、クエリ処理前に関連するコンテキストや背景情報をモデルに読み込むことを指します。これにより、モデルは処理開始時からこの情報にアクセスでき、処理中に追加データを取得する必要がなく、より情報に基づいた応答を生成できます。  
-旅行代理店アプリケーションでの先取りコンテキストロードの簡単なPython例は以下の通りです：  
+### 先取りコンテキストロード (Pre-emptive Context Load)
+「先に関連知識を読み込んでおき、その後の個別クエリでは追加取得を最小化する」戦略です。RAGとの違いは「逐次必要な断片を取りに行く」か「最初に土台コンテキストを敷く」かのタイミング差です。
+
+**利点**: 応答遅延の一貫性 / キャッシュヒット率向上 / 繰り返し質問での再取得削減  
+**欠点**: 初期ロードが冗長化しやすい / 不要データ混入によるトークン浪費 / 動的差分取得が遅れる  
+
+#### 簡易例
 ```python
-class TravelAgent:
+class PreloadedTravelAgent:
     def __init__(self):
-        # Pre-load popular destinations and their information
+        # 代表的な都市情報を先読み（本番運用ではサイズ/鮮度/更新ポリシー管理が必要）
         self.context = {
-            "Paris": {"country": "France", "currency": "Euro", "language": "French", "attractions": ["Eiffel Tower", "Louvre Museum"]},
-            "Tokyo": {"country": "Japan", "currency": "Yen", "language": "Japanese", "attractions": ["Tokyo Tower", "Shibuya Crossing"]},
-            "New York": {"country": "USA", "currency": "Dollar", "language": "English", "attractions": ["Statue of Liberty", "Times Square"]},
-            "Sydney": {"country": "Australia", "currency": "Dollar", "language": "English", "attractions": ["Sydney Opera House", "Bondi Beach"]}
+            "Paris": {
+                "country": "フランス",
+                "language": "フランス語",
+                "attractions": ["エッフェル塔", "ルーヴル美術館"]
+            },
+            "Tokyo": {
+                "country": "日本",
+                "language": "日本語",
+                "attractions": ["浅草寺", "渋谷スクランブル交差点"]
+            }
         }
 
-    def get_destination_info(self, destination):
-        # Fetch destination information from pre-loaded context
-        info = self.context.get(destination)
-        if info:
-            return f"{destination}:\nCountry: {info['country']}\nCurrency: {info['currency']}\nLanguage: {info['language']}\nAttractions: {', '.join(info['attractions'])}"
-        else:
-            return f"Sorry, we don't have information on {destination}."
+    def get_destination_info(self, name: str):
+        # 未登録の場合は空の辞書を返す
+        return self.context.get(name, {})
+```
 
-# Example usage
-travel_agent = TravelAgent()
-print(travel_agent.get_destination_info("Paris"))
-print(travel_agent.get_destination_info("Tokyo"))
-```  
+### 目標ブートストラップ (Bootstrapping the Plan with a Goal)
+反復に入る前に「達成したい評価基準/制約」を初期明示し、各ステップがゴール指標をどれだけ改善したかを観察できる形にします。
 
-#### 説明  
-1. **初期化（`__init__` method)**: The `TravelAgent` class pre-loads a dictionary containing information about popular destinations such as Paris, Tokyo, New York, and Sydney. This dictionary includes details like the country, currency, language, and major attractions for each destination.
-
-2. **Retrieving Information (`get_destination_info` method)**: When a user queries about a specific destination, the `get_destination_info` メソッド）**  
-事前に読み込まれたコンテキスト辞書から関連情報を取得します。コンテキストを先に読み込むことで、旅行代理店アプリはリアルタイムに外部から情報を取得する必要なく、ユーザーの質問に迅速に応答できます。これにより、アプリの効率と応答性が向上します。  
-
-### 反復前の目標を設定したプランのブートストラップ  
-目標を設定してプランをブートストラップするとは、明確な目的や達成したい結果を最初に定めることを意味します。この目標を最初に定義することで、モデルは反復処理の間ずっとそれを指針として使用でき、各反復が望ましい結果に近づくようにプロセスを効率的かつ集中して進められます。  
-以下は旅行代理店がPythonで目標を設定してプランをブートストラップし、反復する例です：  
-
-### シナリオ  
-旅行代理店はクライアントのためにカスタマイズされた休暇プランを作成したいと考えています。目標は、クライアントの希望と予算に基づき満足度を最大化する旅行日程を作成することです。  
-
-### ステップ  
-1. クライアントの希望と予算を定義する。  
-2. これらの希望に基づいて初期プランをブートストラップする。  
-3. クライアントの満足度を最適化するためにプランを反復的に改善する。  
-
-#### Pythonコード  
 ```python
-class TravelAgent:
-    def __init__(self, destinations):
-        self.destinations = destinations
+class GoalBootstrappedPlanner:
+    def __init__(self, candidates):
+        self.candidates = candidates  # [{name, cost, activity}...]
 
-    def bootstrap_plan(self, preferences, budget):
-        plan = []
-        total_cost = 0
-
-        for destination in self.destinations:
-            if total_cost + destination['cost'] <= budget and self.match_preferences(destination, preferences):
-                plan.append(destination)
-                total_cost += destination['cost']
-
+    def bootstrap(self, prefs, budget):
+        plan, total = [], 0
+        for c in self.candidates:
+            if total + c['cost'] <= budget and all(c.get(k) == v for k, v in prefs.items()):
+                plan.append(c); total += c['cost']
         return plan
 
-    def match_preferences(self, destination, preferences):
-        for key, value in preferences.items():
-            if destination.get(key) != value:
-                return False
-        return True
-
-    def iterate_plan(self, plan, preferences, budget):
-        for i in range(len(plan)):
-            for destination in self.destinations:
-                if destination not in plan and self.match_preferences(destination, preferences) and self.calculate_cost(plan, destination) <= budget:
-                    plan[i] = destination
-                    break
+    def iterate(self, plan, prefs, budget):
+        # 単純: 置換を一巡試行し改善 (コスト+嗜好一致) を優先
+        for i, _ in enumerate(plan):
+            for c in self.candidates:
+                if c not in plan and all(c.get(k) == v for k, v in prefs.items()):
+                    new_cost = sum(x['cost'] for x in plan) - plan[i]['cost'] + c['cost']
+                    if new_cost <= budget:
+                        plan[i] = c
+                        break
         return plan
+```
 
-    def calculate_cost(self, plan, new_destination):
-        return sum(destination['cost'] for destination in plan) + new_destination['cost']
+### LLMによるリランキングとスコアリング活用 (Re-ranking & Scoring)
+まず検索で広く候補（安価なベクトル/キーワード検索）を集め、その後 LLM がユーザー意図や嗜好を踏まえて精密に再スコアし上位だけを残す二段構成です。 
+これにより取りこぼしを避けつつノイズとトークンコストを削減し、スコア理由をログ化できるため精度・効率・説明可能性を同時に満たします。 
+全体スコアが低い場合は「再検索/クエリ再生成」を発火させる品質ゲートとしても使えます。
 
-# Example usage
-destinations = [
-    {"name": "Paris", "cost": 1000, "activity": "sightseeing"},
-    {"name": "Tokyo", "cost": 1200, "activity": "shopping"},
-    {"name": "New York", "cost": 900, "activity": "sightseeing"},
-    {"name": "Sydney", "cost": 1100, "activity": "beach"},
-]
-
-preferences = {"activity": "sightseeing"}
-budget = 2000
-
-travel_agent = TravelAgent(destinations)
-initial_plan = travel_agent.bootstrap_plan(preferences, budget)
-print("Initial Plan:", initial_plan)
-
-refined_plan = travel_agent.iterate_plan(initial_plan, preferences, budget)
-print("Refined Plan:", refined_plan)
-```  
-
-#### コード説明  
-1. **初期化（`__init__` method)**: The `TravelAgent` class is initialized with a list of potential destinations, each having attributes like name, cost, and activity type.
-
-2. **Bootstrapping the Plan (`bootstrap_plan` method)**: This method creates an initial travel plan based on the client's preferences and budget. It iterates through the list of destinations and adds them to the plan if they match the client's preferences and fit within the budget.
-
-3. **Matching Preferences (`match_preferences` method)**: This method checks if a destination matches the client's preferences.
-
-4. **Iterating the Plan (`iterate_plan` method)**: This method refines the initial plan by trying to replace each destination in the plan with a better match, considering the client's preferences and budget constraints.
-
-5. **Calculating Cost (`calculate_cost` メソッド）**  
-このメソッドは、新たな目的地を含む現在のプランの総コストを計算します。  
-
-#### 使用例  
-- **初期プラン**：旅行代理店は観光希望と2000ドルの予算に基づき初期プランを作成します。  
-- **改善プラン**：旅行代理店はクライアントの希望と予算に最適化するためプランを反復的に改善します。  
-目標（例：クライアント満足度の最大化）を明確に設定してプランをブートストラップし、反復的に改善することで、旅行代理店はクライアントに合わせた最適な旅行日程を作成できます。この方法により、プランは最初からクライアントの希望と予算に合致し、反復ごとに改善されます。  
-
-### LLMを活用した再ランキングとスコアリング  
-大規模言語モデル（LLM）は、取得した文書や生成した応答の関連性と品質を評価することで再ランキングとスコアリングに利用できます。仕組みは以下の通りです：  
-**取得：** 初期取得ステップでクエリに基づく候補文書や応答のセットを取得する。  
-**再ランキング：** LLMが候補を評価し、関連性と品質に基づいて再ランキングする。このステップで最も関連性が高く質の良い情報が優先される。  
-**スコアリング：** LLMが各候補にスコアを付与し、関連性と品質を反映させる。これにより最適な応答や文書を選択できる。  
-LLMを活用した再ランキングとスコアリングにより、より正確で文脈に合った情報を提供し、ユーザー体験を向上させます。  
-
-以下は旅行代理店がユーザーの希望に基づいて旅行先をLLMで再ランキング・スコアリングするPython例です：  
-
-#### シナリオ - 希望に基づく旅行  
-旅行代理店はクライアントの希望に基づいて最適な旅行先を提案したいと考えています。LLMは旅行先を再ランキング・スコアリングし、最も関連性の高い選択肢を提示します。  
-
-#### ステップ  
-1. ユーザーの希望を収集する。  
-2. 旅行先の候補リストを取得する。  
-3. LLMを使って希望に基づき旅行先を再ランキング・スコアリングする。  
-
-以下はAzure OpenAIサービスを使うための更新例です：  
-
-#### 要件  
-1. Azureサブスクリプションが必要。  
-2. Azure OpenAIリソースを作成しAPIキーを取得。  
-
-#### Pythonコード例  
+#### Azure OpenAI を用いた簡易なプロンプト例
 ```python
-import requests
-import json
+def build_prompt(prefs, destinations):
+    lines = ["ユーザー嗜好:"] + [f"- {k}: {v}" for k, v in prefs.items()]
+    lines.append("\n候補:")
+    for d in destinations:
+        lines.append(f"- {d['name']}: {d['desc']}")
+    lines.append("\n各候補を嗜好適合度(0-5)で評価し JSON 配列で返してください。")
+    return "\n".join(lines)
+```
+> 実際のAPI呼び出し部分はエンドポイント/Keyの設定を行います。ここでは構造保持目的で省略しています。
 
-class TravelAgent:
+#### Azure OpenAI を用いたRe-rankingの例
+```python
+import requests, json
+
+class TravelAgentRerank:
     def __init__(self, destinations):
-        self.destinations = destinations
-
-    def get_recommendations(self, preferences, api_key, endpoint):
-        # Generate a prompt for the Azure OpenAI
-        prompt = self.generate_prompt(preferences)
-        
-        # Define headers and payload for the request
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
-        }
-        payload = {
-            "prompt": prompt,
-            "max_tokens": 150,
-            "temperature": 0.7
-        }
-        
-        # Call the Azure OpenAI API to get the re-ranked and scored destinations
-        response = requests.post(endpoint, headers=headers, json=payload)
-        response_data = response.json()
-        
-        # Extract and return the recommendations
-        recommendations = response_data['choices'][0]['text'].strip().split('\n')
-        return recommendations
+        self.destinations = destinations  # [{name, description}...]
 
     def generate_prompt(self, preferences):
-        prompt = "Here are the travel destinations ranked and scored based on the following user preferences:\n"
-        for key, value in preferences.items():
-            prompt += f"{key}: {value}\n"
-        prompt += "\nDestinations:\n"
-        for destination in self.destinations:
-            prompt += f"- {destination['name']}: {destination['description']}\n"
-        return prompt
+        lines = ["Here are the travel destinations ranked and scored based on user preferences:"]
+        for k, v in preferences.items():
+            lines.append(f"{k}: {v}")
+        lines.append("\nDestinations:")
+        for d in self.destinations:
+            lines.append(f"- {d['name']}: {d['description']}")
+        return "\n".join(lines)
 
-# Example usage
+    def get_recommendations(self, preferences, api_key, endpoint):
+        prompt = self.generate_prompt(preferences)
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        payload = {"prompt": prompt, "max_tokens": 150, "temperature": 0.7}
+        r = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        # 出力フォーマットの揺れ対策で行単位に分割
+        lines = data.get('choices', [{}])[0].get('text', '').strip().split('\n')
+        return [ln for ln in lines if ln.strip()]
+
+# 利用例（endpoint / key は環境変数で保持するのが推奨）
 destinations = [
-    {"name": "Paris", "description": "City of lights, known for its art, fashion, and culture."},
-    {"name": "Tokyo", "description": "Vibrant city, famous for its modernity and traditional temples."},
-    {"name": "New York", "description": "The city that never sleeps, with iconic landmarks and diverse culture."},
-    {"name": "Sydney", "description": "Beautiful harbour city, known for its opera house and stunning beaches."},
+    {"name": "Paris", "description": "芸術・ファッション・文化"},
+    {"name": "Tokyo", "description": "近代性と伝統の融合"},
+    {"name": "New York", "description": "多様性とランドマーク"},
+    {"name": "Sydney", "description": "港とビーチ"},
 ]
+preferences = {"activity": "sightseeing", "culture": "diverse"}  # culture=多様性志向
+# agent = TravelAgentRerank(destinations)
+# recs = agent.get_recommendations(preferences, api_key=..., endpoint=...)
+# print(recs)  # LLM出力行をそのまま配列化した結果
+```
+> 注意: 本番では API キーを直接埋め込まず Key Vault / 環境変数で管理し、レート制限/エラーハンドリング(429/5xx再試行)を追加します。
 
-preferences = {"activity": "sightseeing", "culture": "diverse"}
-api_key = 'your_azure_openai_api_key'
-endpoint = 'https://your-endpoint.com/openai/deployments/your-deployment-name/completions?api-version=2022-12-01'
+### RAG: プロンプト技法 vs ツール化
+最初はプロンプトを直接書き換えて「どの再書き換え・分割・要約・再ランキング観点が効くか」を素早く試し、その後に安定パターンを部品化してツールへ組み込みます。この段階的な移行で再現性と測定性を高めながら無駄な早期最適化を避けます。
 
-travel_agent = TravelAgent(destinations)
-recommendations = travel_agent.get_recommendations(preferences, api_key, endpoint)
-print("Recommended Destinations:")
-for rec in recommendations:
-    print(rec)
-```  
+**どちらを選ぶかの目安**
+- ユーザー質問の種類や評価指標がまだ固まっていない段階ではプロンプト技法を使って試行回数を増やします。
+- 同じ失敗分析（例: クエリ不足, 過剰取得）を繰り返している場合はその手順をツール内部の明示ステップへ昇格します。
+- コストや応答時間を継続的に追跡したい場合はツール化して計測フック（ログ/指標）を標準化します。
+- 出力品質の揺れを抑えチームで共有したい場合は頻出プロンプト断片をテンプレート化して埋め込みます。
 
-#### コード説明  
-- Preference Booker  
-1. **初期化**：`TravelAgent` class is initialized with a list of potential travel destinations, each having attributes like name and description.
+**移行の流れ（例）**
+1. 実験段階で入力プロンプト / 取得件数 / 回答 / 簡易指標（再現率, コスト）を記録します。
+2. 10〜20回の試行で安定した再書き換え語彙や再ランキング観点を抽出します。
+3. 抽出結果を `rewrite_query()`, `rerank(docs)`, `synthesize_answer()` など小さな関数に分離します。
+4. 関数の入出力を JSON で記録し差分と回帰を後から追跡できるようにします。
+5. 閾値（例: 再現率 < 0.6 または トークン当たりコスト > 許容量）を定義しガードを組み込みます。
 
-2. **Getting Recommendations (`get_recommendations` method)**: This method generates a prompt for the Azure OpenAI service based on the user's preferences and makes an HTTP POST request to the Azure OpenAI API to get re-ranked and scored destinations.
+**トレードオフ（簡潔まとめ）**
+- プロンプト技法: 初期負担が低く高速に学習できますが、品質の揺れと属人化が起こりやすいです。
+- ツール化: 実装初期コストは高いですが、再現性・監視性・拡張性を向上させます。
 
-3. **Generating Prompt (`generate_prompt` method)**: This method constructs a prompt for the Azure OpenAI, including the user's preferences and the list of destinations. The prompt guides the model to re-rank and score the destinations based on the provided preferences.
+段階を *探索 → 抽象化 → インターフェース確立* と進めることで、早すぎる固定化と遅すぎる標準化の両方を避けられます。
 
-4. **API Call**: The `requests` library is used to make an HTTP POST request to the Azure OpenAI API endpoint. The response contains the re-ranked and scored destinations.
-
-5. **Example Usage**: The travel agent collects user preferences (e.g., interest in sightseeing and diverse culture) and uses the Azure OpenAI service to get re-ranked and scored recommendations for travel destinations.
-
-Make sure to replace `your_azure_openai_api_key` with your actual Azure OpenAI API key and `https://your-endpoint.com/...` はAzure OpenAIの実際のエンドポイントURLに置き換えます。  
-LLMを活用した再ランキングとスコアリングにより、旅行代理店はよりパーソナライズされ関連性の高い旅行提案を提供し、クライアントの体験を向上させます。  
-
-### RAG：プロンプティング技術 vs ツール  
-Retrieval-Augmented Generation（RAG）は、AIエージェント開発においてプロンプティング技術としてもツールとしても利用可能です。この二つの違いを理解することで、プロジェクトでRAGをより効果的に活用できます。  
-
-#### プロンプティング技術としてのRAG  
-**それは何か？**  
-- プロンプティング技術としてのRAGは、大規模コーパスやデータベースから関連情報を取得するために特定のクエリやプロンプトを作成することを指します。この情報を使って応答やアクションを生成します。  
-
-**仕組み：**  
-1. **プロンプト作成**：タスクやユーザー入力に基づいて構造化されたプロンプトやクエリを作成する。  
-2. **情報取得**：プロンプトを使って既存の知識ベースやデータセットから関連データを検索する。  
-3. **応答生成**：取得情報と生成AIモデルを組み合わせて包括的で一貫した応答を作成する。  
-
-**旅行代理店での例：**  
-- ユーザー入力：「パリの博物館に行きたい」  
-- プロンプト：「パリの主要な博物館を探して」  
-- 取得情報：ルーヴル美術館、オルセー美術館などの詳細  
-- 生成応答：「パリの主要な博物館には、ルーヴル美術館、オルセー美術館、ポンピドゥーセンターがあります。」  
-
-#### ツールとしてのRAG  
-**それは何か？**  
-- ツールとしてのRAGは、検索と生成のプロセスを自動化する統合システムであり、開発者が各クエリのためにプロンプトを手動で作成せずに複雑なAI機能を実装しやすくします。  
-
-**仕組み：**  
-1. **統合**：RAGをAIエージェントのアーキテクチャに組み込み、自動的に検索と生成タスクを処理させる。  
-2. **自動化**：ユーザー入力の受信から最終応答の生成まで、各ステップで明示的なプロンプトを必要とせずに全プロセスを管理する。  
-3. **効率化**：検索と生成プロセスを効率化し、より速く正確な応答を可能にする。  
-
-**旅行代理店での例：**  
-- ユーザー入力：「パリの博物館に行きたい」  
-- RAGツール：自動的に博物館情報を取得し応答を生成。  
-- 生成応答：「パリの主要な博物館には、ルーヴル美術館、オルセー美術館、ポンピドゥーセンターがあります。」  
-
-### 比較  
-
-| 項目                  | プロンプティング技術                              | ツール                                        |  
-|-----------------------|-------------------------------------------------|-----------------------------------------------|  
-| **手動 vs 自動**       | 各クエリに対し手動でプロンプトを作成             | 取得と生成を自動化                             |  
-| **制御性**             | 取得プロセスをより細かく制御可能                  | 取得と生成を効率化・自動化                     |  
-| **柔軟性**             | 特定のニーズに合わせたカスタムプロンプトが可能    | 大規模実装により効率的                         |  
-| **複雑さ**             | プロンプトの作成・調整が必要                      | AIエージェントのアーキテクチャに統合しやすい |  
-
-### 実践例  
-**プロンプティング技術の例：**  
+#### 簡易コード対比
 ```python
+# Prompting Technique
 def search_museums_in_paris():
-    prompt = "Find top museums in Paris"
-    search_results = search_web(prompt)
-    return search_results
+    q = "Find top museums in Paris"
+    return web_search(q)
 
-museums = search_museums_in_paris()
-print("Top Museums in Paris:", museums)
-```  
-**ツールの例：**  
+# Tool 化 (内部で embedding→retrieve→rerank を隠蔽)
+class RAGTool:
+    def retrieve_and_generate(self, user_input: str):
+        docs = retrieve(user_input)
+        return synthesize_answer(user_input, docs)
+```
+
+### 関連性評価 (Evaluating Relevancy)
+ここでいう関連性は単一指標ではなく、(1) ユーザー意図に合っているか、(2) 記述が事実と矛盾しないか、(3) 必要な観点をどれだけ網羅しているか、(4) 余分な重複が抑えられているか、の複合観点で判断します。下の簡易 `relevance_score` は最小例であり、実運用では重み付けや減点（例: ノイズ語含有, 重複度）を追加します。
+
 ```python
-class Travel_Agent:
-    def __init__(self):
-        self.rag_tool = RAGTool()
+def relevance_score(item, query):
+    score = 0
+    # 嗜好カテゴリ適合: 興味一覧に含まれるか
+    if item.get('category') in query.get('interests', []):
+        score += 1
+    # 予算制約: 価格が最大許容以下か
+    if item.get('price', 10**9) <= query.get('budget_max', 10**9):
+        score += 1
+    # 目的地一致: ロケーションが指定目的地か
+    if item.get('location') == query.get('destination'):
+        score += 1
+    return score
 
-    def get_museums_in_paris(self):
-        user_input = "I want to visit museums in Paris."
-        response = self.rag_tool.retrieve_and_generate(user_input)
-        return response
+def filter_and_rank(items, query):
+    # スコア降順で上位10件を返します
+    ranked = sorted(items, key=lambda x: relevance_score(x, query), reverse=True)
+    return ranked[:10]
+```
 
-travel_agent = Travel_Agent()
-museums = travel_agent.get_museums_in_paris()
-print("Top Museums in Paris:", museums)
-```  
+### 意図にもとづく検索 (Search with Intent)
+この小節ではクエリの「意図」を簡易分類して、検索戦略（クエリ書き換えや検索対象）を切り替える最小構成の例を示します。単純な文字列検索だけでは目的の異なる要求（学びたい / 公式サイトへ行きたい / 予約したい）が同じ処理に流れ、不要な結果やコスト増につながるため、先に意図を推定して分岐します。
 
-### 関連性の評価  
-関連性の評価はAIエージェントの性能において極めて重要です。これにより、エージェントが取得・生成した情報が適切で正確かつユーザーにとって有用であることが保証されます。ここでは、AIエージェントの関連性評価の方法、実践例、技術について探ります。  
+分類は次の三つを扱います。
+1. Informational: 何かを理解したい・比較したい要求です（例: "best museums in Kyoto"）。広めの語を補強し要約性と網羅性を高めるクエリへ拡張します。
+2. Navigational: 特定の既知サイトや公式リソースへ到達したい要求です（例: "kyoto city official website"）。過度な書き換えは避け、原文または最小限の正規化のみを行います。
+3. Transactional: 予約・購入・申し込みなど行動完了を狙う要求です（例: "book kyoto ryokan"）。動詞（book, buy など）や時期情報を強調して実行可能な検索語を組み立てます。
 
-#### 関連性評価の重要な概念  
-1. **コンテキスト認識**：  
-- エージェントはユーザーのクエリの文脈を理解し、関連情報を取得・生成しなければならない。  
-- 例：ユーザーが「パリのおすすめレストラン」と尋ねた場合、料理の種類や予算などユーザーの好みを考慮する。  
-2. **正確性**：  
-- エージェントが提供する情報は事実に基づき最新である必要がある。  
-- 例：現在営業中で評価の高いレストランを推奨し、閉店した店や古い情報は避ける。  
-3. **ユーザーの意図**：  
--
-エージェントは、ユーザーのクエリの背後にある意図を推測し、最も関連性の高い情報を提供する必要があります。  
-- 例：ユーザーが「予算に優しいホテル」を尋ねた場合、エージェントは手頃な価格のオプションを優先すべきです。  
+以下は単純なキーワード判定による例です。実運用では以下を追加します。
+- 形態素解析または埋め込み類似度による動詞・目的語抽出
+- LLM への少量プロンプトでのラベル推定と信頼度しきい値
+- 不確実ラベル (low_confidence) へのフォールバック処理
 
-4. **フィードバックループ**:  
-- ユーザーからのフィードバックを継続的に収集・分析することで、エージェントは関連性評価プロセスを改善できます。  
-- 例：過去の推奨に対するユーザー評価やフィードバックを取り入れ、将来の応答を改善する。  
+この段階で信頼度を付与しておくと、後段の再ランキングやメタ認知評価で「意図誤分類による失敗パターン」を切り分けやすくなります。
 
-#### 関連性評価の実践的手法  
-1. **関連性スコアリング**:  
-- ユーザーのクエリや好みにどれだけマッチしているかに基づき、取得した各アイテムに関連性スコアを割り当てる。  
-- 例：```python
-     def relevance_score(item, query):
-         score = 0
-         if item['category'] in query['interests']:
-             score += 1
-         if item['price'] <= query['budget']:
-             score += 1
-         if item['location'] == query['destination']:
-             score += 1
-         return score
-     ```  
+```python
+def classify_intent(text: str):
+    """非常に単純なヒューリスティック分類です。信頼度は未実装なので実運用では必ず補強します。"""
+    lowered = text.lower()
+    if any(k in lowered for k in ["book", "purchase", "reserve", "buy"]):
+        return "transactional"
+    if any(k in lowered for k in ["official", "website", "portal"]):
+        return "navigational"
+    return "informational"
 
-2. **フィルタリングとランキング**:  
-- 関連性の低いアイテムを除外し、残ったアイテムを関連性スコアに基づいてランク付けする。  
-- 例：```python
-     def filter_and_rank(items, query):
-         ranked_items = sorted(items, key=lambda item: relevance_score(item, query), reverse=True)
-         return ranked_items[:10]  # Return top 10 relevant items
-     ```  
+def rewrite_query(query: str, intent: str, prefs):
+    """意図に応じた検索語最適化を行います。最低限の例です。"""
+    if intent == "informational":
+        # 興味分野と地点を組み合わせ広めに探索します
+        return f"best {prefs['interests'][0]} in {prefs['destination']}"
+    if intent == "navigational":
+        # 原文を尊重し過剰拡張を避けます
+        return query
+    # transactional: 予約・購入行為を明示します
+    return f"book {prefs['destination']} {prefs['dates']}"
 
-3. **自然言語処理（NLP）**:  
-- NLP技術を用いてユーザーのクエリを理解し、関連情報を取得する。  
-- 例：```python
-     def process_query(query):
-         # Use NLP to extract key information from the user's query
-         processed_query = nlp(query)
-         return processed_query
-     ```  
+def search_with_intent(query: str, prefs):
+    intent = classify_intent(query)
+    rewritten = rewrite_query(query, intent, prefs)
+    # 実際には intent と rewritten をログへ記録して後続のメタ認知評価に利用します
+    return web_search(rewritten)
+```
 
-4. **ユーザーフィードバック統合**:  
-- 提供した推奨に対するユーザーフィードバックを収集し、将来の関連性評価に反映させる。  
-- 例：```python
-     def adjust_based_on_feedback(feedback, items):
-         for item in items:
-             if item['name'] in feedback['liked']:
-                 item['relevance'] += 1
-             if item['name'] in feedback['disliked']:
-                 item['relevance'] -= 1
-         return items
-     ```  
 
-#### 例：Travel Agentにおける関連性評価  
-Travel Agentが旅行推奨の関連性を評価する実践例：```python
-class Travel_Agent:
-    def __init__(self):
-        self.user_preferences = {}
-        self.experience_data = []
 
-    def gather_preferences(self, preferences):
-        self.user_preferences = preferences
-
-    def retrieve_information(self):
-        flights = search_flights(self.user_preferences)
-        hotels = search_hotels(self.user_preferences)
-        attractions = search_attractions(self.user_preferences)
-        return flights, hotels, attractions
-
-    def generate_recommendations(self):
-        flights, hotels, attractions = self.retrieve_information()
-        ranked_hotels = self.filter_and_rank(hotels, self.user_preferences)
-        itinerary = create_itinerary(flights, ranked_hotels, attractions)
-        return itinerary
-
-    def filter_and_rank(self, items, query):
-        ranked_items = sorted(items, key=lambda item: self.relevance_score(item, query), reverse=True)
-        return ranked_items[:10]  # Return top 10 relevant items
-
-    def relevance_score(self, item, query):
-        score = 0
-        if item['category'] in query['interests']:
-            score += 1
-        if item['price'] <= query['budget']:
-            score += 1
-        if item['location'] == query['destination']:
-            score += 1
-        return score
-
-    def adjust_based_on_feedback(self, feedback, items):
-        for item in items:
-            if item['name'] in feedback['liked']:
-                item['relevance'] += 1
-            if item['name'] in feedback['disliked']:
-                item['relevance'] -= 1
-        return items
-
-# Example usage
-travel_agent = Travel_Agent()
-preferences = {
-    "destination": "Paris",
-    "dates": "2025-04-01 to 2025-04-10",
-    "budget": "moderate",
-    "interests": ["museums", "cuisine"]
-}
-travel_agent.gather_preferences(preferences)
-itinerary = travel_agent.generate_recommendations()
-print("Suggested Itinerary:", itinerary)
-feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
-updated_items = travel_agent.adjust_based_on_feedback(feedback, itinerary['hotels'])
-print("Updated Itinerary with Feedback:", updated_items)
-```  
-
-### 意図を持った検索  
-意図を持った検索とは、ユーザーのクエリの背後にある目的や目標を理解・解釈し、最も関連性が高く有用な情報を取得・生成することです。このアプローチは単にキーワードを一致させるだけでなく、ユーザーの実際のニーズや文脈を把握することに重点を置いています。  
-
-#### 意図を持った検索の主要概念  
-1. **ユーザーの意図理解**:  
-- ユーザーの意図は主に情報収集型、ナビゲーション型、取引型の3つに分類されます。  
-- **情報収集型意図**：ユーザーがあるトピックに関する情報を求めている（例：「パリのおすすめ美術館は？」）。  
-- **ナビゲーション型意図**：ユーザーが特定のウェブサイトやページにアクセスしたい（例：「ルーブル美術館公式サイト」）。  
-- **取引型意図**：ユーザーが取引を行いたい（例：「パリ行きの航空券を予約」）。  
-
-2. **コンテキスト認識**:  
-- ユーザーのクエリの文脈を分析し、意図を正確に特定する。これには過去のやり取り、ユーザーの好み、現在のクエリの具体的な詳細が含まれます。  
-
-3. **自然言語処理（NLP）**:  
-- NLP技術を用いて、ユーザーが入力した自然言語クエリを理解・解釈する。これにはエンティティ認識、感情分析、クエリ解析などのタスクが含まれます。  
-
-4. **パーソナライズ**:  
-- ユーザーの履歴、好み、フィードバックに基づいて検索結果をパーソナライズし、取得情報の関連性を高める。  
-
-#### 実践例：Travel Agentにおける意図を持った検索  
-Travel Agentを例に、意図を持った検索の実装例を示します。  
-1. **ユーザーの好み収集** ```python
-   class Travel_Agent:
-       def __init__(self):
-           self.user_preferences = {}
-
-       def gather_preferences(self, preferences):
-           self.user_preferences = preferences
-   ```  
-2. **ユーザーの意図理解** ```python
-   def identify_intent(query):
-       if "book" in query or "purchase" in query:
-           return "transactional"
-       elif "website" in query or "official" in query:
-           return "navigational"
-       else:
-           return "informational"
-   ```  
-3. **コンテキスト認識** ```python
-   def analyze_context(query, user_history):
-       # Combine current query with user history to understand context
-       context = {
-           "current_query": query,
-           "user_history": user_history
-       }
-       return context
-   ```  
-4. **検索と結果のパーソナライズ** ```python
-   def search_with_intent(query, preferences, user_history):
-       intent = identify_intent(query)
-       context = analyze_context(query, user_history)
-       if intent == "informational":
-           search_results = search_information(query, preferences)
-       elif intent == "navigational":
-           search_results = search_navigation(query)
-       elif intent == "transactional":
-           search_results = search_transaction(query, preferences)
-       personalized_results = personalize_results(search_results, user_history)
-       return personalized_results
-
-   def search_information(query, preferences):
-       # Example search logic for informational intent
-       results = search_web(f"best {preferences['interests']} in {preferences['destination']}")
-       return results
-
-   def search_navigation(query):
-       # Example search logic for navigational intent
-       results = search_web(query)
-       return results
-
-   def search_transaction(query, preferences):
-       # Example search logic for transactional intent
-       results = search_web(f"book {query} to {preferences['destination']}")
-       return results
-
-   def personalize_results(results, user_history):
-       # Example personalization logic
-       personalized = [result for result in results if result not in user_history]
-       return personalized[:10]  # Return top 10 personalized results
-   ```  
-5. **使用例** ```python
-   travel_agent = Travel_Agent()
-   preferences = {
-       "destination": "Paris",
-       "interests": ["museums", "cuisine"]
-   }
-   travel_agent.gather_preferences(preferences)
-   user_history = ["Louvre Museum website", "Book flight to Paris"]
-   query = "best museums in Paris"
-   results = search_with_intent(query, preferences, user_history)
-   print("Search Results:", results)
-   ```  
-
----  
-
-## 4. ツールとしてのコード生成  
+## ツールとしてのコード生成  
 コード生成エージェントはAIモデルを使ってコードを書き、実行し、複雑な問題を解決したりタスクを自動化したりします。  
+
+この節は直前まで扱ってきた「計画 → 実行 → 評価 → 改良」のメタ認知ループを、テキスト回答ではなく“検証可能なコード資産”に適用した拡張です。評価指標がテスト・型・静的解析・実行ログといった自動化可能なシグナルに置き換わる点が本質的な違いです。ここではその橋渡しとして、同じループ構造がどのようにコード生成に再利用されるかを最小構成で示します。  
 
 ### コード生成エージェント  
 コード生成エージェントは生成AIモデルを用いてコードを生成・実行します。これにより複雑な問題を解決し、タスクを自動化し、多様なプログラミング言語でコードを生成・実行して有益な洞察を提供します。  
@@ -931,95 +794,86 @@ Travel Agentを例に、意図を持った検索の実装例を示します。
 5. **フィードバックに基づく調整**：ユーザーフィードバックを受け取り、必要に応じてコードを再生成し結果を改善。  
 
 #### 実装ステップ  
-1. **ユーザーの好み収集** ```python
-   class Travel_Agent:
-       def __init__(self):
-           self.user_preferences = {}
+1. **ユーザーの好み収集**  
+```python
+class Travel_Agent:
+    def __init__(self):
+        self.user_preferences = {}
 
-       def gather_preferences(self, preferences):
-           self.user_preferences = preferences
-   ```  
-2. **データ取得用コード生成** ```python
-   def generate_code_to_fetch_data(preferences):
-       # Example: Generate code to search for flights based on user preferences
-       code = f"""
-       def search_flights():
-           import requests
-           response = requests.get('https://api.example.com/flights', params={preferences})
-           return response.json()
-       """
-       return code
+    def gather_preferences(self, preferences):
+        self.user_preferences = preferences
+```
+2. **データ取得用コード生成**  
+```python
+def generate_code_to_fetch_data(preferences):
+    # フライト検索用コード文字列を生成
+    code = f"""
+def search_flights():
+    import requests
+    response = requests.get('https://api.example.com/flights', params={preferences})
+    return response.json()
+"""
+    return code
 
-   def generate_code_to_fetch_hotels(preferences):
-       # Example: Generate code to search for hotels
-       code = f"""
-       def search_hotels():
-           import requests
-           response = requests.get('https://api.example.com/hotels', params={preferences})
-           return response.json()
-       """
-       return code
-   ```  
-3. **生成コードの実行** ```python
-   def execute_code(code):
-       # Execute the generated code using exec
-       exec(code)
-       result = locals()
-       return result
+def generate_code_to_fetch_hotels(preferences):
+    # ホテル検索用コード文字列を生成
+    code = f"""
+def search_hotels():
+    import requests
+    response = requests.get('https://api.example.com/hotels', params={preferences})
+    return response.json()
+"""
+    return code
+```
+3. **生成コードの実行**  
+```python
+def execute_code(code):
+    # 生成したコードを実行
+    exec(code, globals())
+    return {k: v for k, v in globals().items() if k.startswith('search_')}
 
-   travel_agent = Travel_Agent()
-   preferences = {
-       "destination": "Paris",
-       "dates": "2025-04-01 to 2025-04-10",
-       "budget": "moderate",
-       "interests": ["museums", "cuisine"]
-   }
-   travel_agent.gather_preferences(preferences)
-   
-   flight_code = generate_code_to_fetch_data(preferences)
-   hotel_code = generate_code_to_fetch_hotels(preferences)
-   
-   flights = execute_code(flight_code)
-   hotels = execute_code(hotel_code)
+travel_agent = Travel_Agent()
+preferences = {
+    "destination": "Paris",
+    "dates": "2025-04-01 to 2025-04-10",
+    "budget": "moderate",
+    "interests": ["museums", "cuisine"]
+}
+travel_agent.gather_preferences(preferences)
 
-   print("Flight Options:", flights)
-   print("Hotel Options:", hotels)
-   ```  
-4. **旅程生成** ```python
-   def generate_itinerary(flights, hotels, attractions):
-       itinerary = {
-           "flights": flights,
-           "hotels": hotels,
-           "attractions": attractions
-       }
-       return itinerary
+flight_code = generate_code_to_fetch_data(preferences)
+hotel_code = generate_code_to_fetch_hotels(preferences)
 
-   attractions = search_attractions(preferences)
-   itinerary = generate_itinerary(flights, hotels, attractions)
-   print("Suggested Itinerary:", itinerary)
-   ```  
-5. **フィードバックに基づく調整** ```python
-   def adjust_based_on_feedback(feedback, preferences):
-       # Adjust preferences based on user feedback
-       if "liked" in feedback:
-           preferences["favorites"] = feedback["liked"]
-       if "disliked" in feedback:
-           preferences["avoid"] = feedback["disliked"]
-       return preferences
+exec_env_flights = execute_code(flight_code)
+exec_env_hotels = execute_code(hotel_code)
+print("生成されたフライト取得関数キー:", list(exec_env_flights.keys()))
+print("生成されたホテル取得関数キー:", list(exec_env_hotels.keys()))
+```
+4. **旅程生成**  
+```python
+def generate_itinerary(flights, hotels, attractions):
+    return {"flights": flights, "hotels": hotels, "attractions": attractions}
 
-   feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
-   updated_preferences = adjust_based_on_feedback(feedback, preferences)
-   
-   # Regenerate and execute code with updated preferences
-   updated_flight_code = generate_code_to_fetch_data(updated_preferences)
-   updated_hotel_code = generate_code_to_fetch_hotels(updated_preferences)
-   
-   updated_flights = execute_code(updated_flight_code)
-   updated_hotels = execute_code(updated_hotel_code)
-   
-   updated_itinerary = generate_itinerary(updated_flights, updated_hotels, attractions)
-   print("Updated Itinerary:", updated_itinerary)
-   ```  
+# ダミー呼び出し（実際は search_* 関数結果を使用）
+flights = [{"id": "F100", "price": 480}]
+hotels = [{"name": "Central Hotel", "price": 150}]
+attractions = ["Louvre Museum", "Seine Walk"]
+itinerary = generate_itinerary(flights, hotels, attractions)
+print("提案旅程:", itinerary)
+```
+5. **フィードバックに基づく調整**  
+```python
+def adjust_based_on_feedback(feedback, preferences):
+    if feedback.get("liked"):
+        preferences["favorites"] = feedback["liked"]
+    if feedback.get("disliked"):
+        preferences["avoid"] = feedback["disliked"]
+    return preferences
+
+feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
+updated_preferences = adjust_based_on_feedback(feedback, preferences)
+print("更新後のユーザー嗜好:", updated_preferences)
+```
 
 ### 環境認識と推論の活用  
 テーブルのスキーマに基づくことで、環境認識と推論を活用したクエリ生成プロセスを強化できます。以下はその例です：  
@@ -1027,21 +881,22 @@ Travel Agentを例に、意図を持った検索の実装例を示します。
 2. **フィードバックに基づく調整**：フィードバックに基づきユーザーの好みを調整し、スキーマのどのフィールドを更新すべきか推論。  
 3. **クエリの生成と実行**：調整された好みに基づき、更新されたフライト・ホテルデータを取得するクエリを生成・実行。  
 
-以下はこれらの概念を組み込んだPythonコード例：```python
+以下はこれらの概念を組み込んだPythonコード例：
+```python
 def adjust_based_on_feedback(feedback, preferences, schema):
-    # Adjust preferences based on user feedback
+    # フィードバック内容に基づき嗜好を更新
     if "liked" in feedback:
         preferences["favorites"] = feedback["liked"]
     if "disliked" in feedback:
         preferences["avoid"] = feedback["disliked"]
-    # Reasoning based on schema to adjust other related preferences
+    # スキーマに基づく推論で関連フィールドも調整
     for field in schema:
         if field in preferences:
             preferences[field] = adjust_based_on_environment(feedback, field, schema)
     return preferences
 
 def adjust_based_on_environment(feedback, field, schema):
-    # Custom logic to adjust preferences based on schema and feedback
+    # スキーマ＋フィードバックに基づくカスタム調整ロジック
     if field in feedback["liked"]:
         return schema[field]["positive_adjustment"]
     elif field in feedback["disliked"]:
@@ -1049,33 +904,33 @@ def adjust_based_on_environment(feedback, field, schema):
     return schema[field]["default"]
 
 def generate_code_to_fetch_data(preferences):
-    # Generate code to fetch flight data based on updated preferences
+    # 更新後嗜好に基づきフライト取得コード（呼び出し文字列）を生成
     return f"fetch_flights(preferences={preferences})"
 
 def generate_code_to_fetch_hotels(preferences):
-    # Generate code to fetch hotel data based on updated preferences
+    # 更新後嗜好に基づきホテル取得コード（呼び出し文字列）を生成
     return f"fetch_hotels(preferences={preferences})"
 
 def execute_code(code):
-    # Simulate execution of code and return mock data
+    # コード実行をシミュレートしモックデータを返す
     return {"data": f"Executed: {code}"}
 
 def generate_itinerary(flights, hotels, attractions):
-    # Generate itinerary based on flights, hotels, and attractions
+    # フライト・ホテル・観光地を統合して旅程生成
     return {"flights": flights, "hotels": hotels, "attractions": attractions}
 
-# Example schema
+# スキーマ例
 schema = {
     "favorites": {"positive_adjustment": "increase", "negative_adjustment": "decrease", "default": "neutral"},
     "avoid": {"positive_adjustment": "decrease", "negative_adjustment": "increase", "default": "neutral"}
 }
 
-# Example usage
-preferences = {"favorites": "sightseeing", "avoid": "crowded places"}
-feedback = {"liked": ["Louvre Museum"], "disliked": ["Eiffel Tower (too crowded)"]}
+# 利用例
+preferences = {"favorites": "観光スポット巡り", "avoid": "混雑した場所"}
+feedback = {"liked": ["ルーヴル美術館"], "disliked": ["エッフェル塔 (混雑しすぎ) "]}
 updated_preferences = adjust_based_on_feedback(feedback, preferences, schema)
 
-# Regenerate and execute code with updated preferences
+# 更新された嗜好に基づきコードを再生成・実行
 updated_flight_code = generate_code_to_fetch_data(updated_preferences)
 updated_hotel_code = generate_code_to_fetch_hotels(updated_preferences)
 
@@ -1083,19 +938,43 @@ updated_flights = execute_code(updated_flight_code)
 updated_hotels = execute_code(updated_hotel_code)
 
 updated_itinerary = generate_itinerary(updated_flights, updated_hotels, feedback["liked"])
-print("Updated Itinerary:", updated_itinerary)
-```  
+print("更新後旅程:", updated_itinerary)
+```
 
 #### 説明 - フィードバックに基づく予約  
-1. **スキーマ認識**：`schema` dictionary defines how preferences should be adjusted based on feedback. It includes fields like `favorites` and `avoid`, with corresponding adjustments.
-2. **Adjusting Preferences (`adjust_based_on_feedback` method)**: This method adjusts preferences based on user feedback and the schema.
-3. **Environment-Based Adjustments (`adjust_based_on_environment` メソッドは、スキーマとフィードバックに基づいて調整をカスタマイズ。  
+1. **スキーマ認識**：`schema` はフィードバックにもとづき嗜好をどのように調整するかを定義する辞書で、`favorites` や `avoid` などのフィールドとその調整方針を持つ。  
+2. **嗜好調整 (`adjust_based_on_feedback` メソッド)**：ユーザーフィードバックとスキーマ規則を参照し、該当する嗜好フィールドを更新する。  
+3. **環境ベース調整 (`adjust_based_on_environment`)**：スキーマとフィードバックに基づいて関連フィールドの値を最適化。  
 4. **クエリ生成と実行**：調整された好みに基づき、フライト・ホテルデータを取得するコードを生成し、クエリの実行をシミュレート。  
 5. **旅程生成**：新しいフライト、ホテル、観光地データに基づいて更新された旅程を作成。  
 
 環境認識とスキーマに基づく推論を活用することで、より正確で関連性の高いクエリを生成でき、より良い旅行推奨とパーソナライズされたユーザー体験が実現します。  
 
+#### 失敗パターンと世界モデルによる対処一覧  
+環境モデルを明示的に持たない場合に起こりやすい失敗と、それを抑えるためにどの状態フィールドを管理し何を更新するかを整理しました。表の文は簡潔にし、後工程の自動化（SQL条件最適化やコード生成）でそのまま利用しやすい形にしています。  
+
+| 失敗パターン | 症状 | 関連状態 | 検出条件例 | 主な更新タイミング | 対処 | 改善後の状態 |
+|--------------|------|----------|------------|----------------|------|----------------|
+| 嗜好を再入力させてしまう | 毎回「静かなホテル」を聞き直します | `inferred_preferences` | 直近N発話で同義表現を複数検出 | ユーザー発話直後 | `ambience=quiet` を保存し検索条件へ追加します | 同じ希望を再質問しません |
+| 禁止条件を反映しない | avoid:crowded を無視した案を提示します | `avoid`, `change_log` | 提示候補に禁止語が含まれます | 検索直前 | 最新 `avoid` 差分をフィルタへ再適用します | 禁止条件違反案が除外されます |
+| 全体を無駄に再計算する | 1ホテル変更で旅程全再生成します | `change_log` | 変更要素=1 かつ 再計算範囲>50% | 差分検出時 | 影響範囲を特定し該当部分のみ再生成します | 無関係部分は保持されます |
+| レート制限を連続発生 | API エラーが連続します | `resources.api_remaining` | 残回数 < 閾値 | 各API後 | キャッシュ/要約モードへ切り替えます | エラー頻度が低下します |
+| 改善理由が説明できない | スコア変化の原因不明です | `evaluation_metrics`, `change_log` | スコア差>=閾値 且つ 原因未記録 | 評価後 | 指標→更新項目 の対応を記録します | ログに改善理由が残ります |
+| 検索が過剰または不足 | 取得件数過多や0件です | `context_quality` | 重複率>30% または カバレッジ<閾値 | 取得直後 | 上限縮小 / クエリ語彙拡張を行います | 件数と重複率が許容内に収まります |
+| 嗜好を再度質問する | 既知の予算を再質問します | `user_preferences` | 質問候補キーが既存です | 質問生成前 | 既存キーを質問候補から除外します | 不要な再質問が消えます |
+| 予算制約が崩れる | 予算超過案を提示します | `user_preferences`, `change_log` | 案合計 > 予算値 | プラン生成直前 | 予算超過案を除外し代替を挿入します | 予算内案のみ提示されます |
+| 過去回避を忘れる | 除外済み候補が再出現します | `change_log`, `avoid` | 候補ID が除外リストに存在 | 候補マージ時 | ブラックリスト照合で除外します | 再提示が発生しません |
+
+最初は `user_preferences`, `inferred_preferences`, `avoid`, `resources`, `change_log` の5項目から始めます。必要になった段階で `evaluation_metrics` と `context_quality` を追加すると複雑さを抑えながら拡張できます。  
+
+用語補足: 「除外候補ID」はユーザーが不要または避けたいと明示/暗示したホテルやフライト等の内部識別子です。会話メッセージIDではありません。再提示防止と「なぜ除外されたか」を説明する根拠として利用します。  
+
 ### RAG技術としてのSQLの活用  
+（導入）メタ認知で得た「どの条件が失敗に寄与したか」を再現・検証するには構造化取得が有効です。SQL を加える主目的は以下の3点です。
+1. 再現性: クエリそのものが実験条件の完全記録となり、後で同一条件比較が容易になります。
+2. 条件単位評価: WHERE / JOIN / LIMIT 等ごとに行数・重複率・カバレッジ指標を記録し、過剰/不足/冗長を局所修正できます。
+3. コスト最適化: 不要列除去やフィルタ順序変更を試行し、トークン消費・IO削減効果を数値で追跡できます。
+
 SQL（構造化問い合わせ言語）はデータベース操作に強力なツールです。Retrieval-Augmented Generation（RAG）アプローチの一部として使用すると、SQLはデータベースから関連データを取得し、AIエージェントの応答や行動生成に役立ちます。Travel Agentの文脈でSQLをRAG技術として活用する方法を見てみましょう。  
 
 #### 主要概念  
@@ -1116,180 +995,247 @@ SQL（構造化問い合わせ言語）はデータベース操作に強力な�
 - **RAGとしてのSQL**：データ操作にSQLクエリを使用。  
 - **問題解決**：問題解決のためのコード生成・実行。  
 
-**例**：データ分析エージェント  
-1. **タスク**：データセットの傾向分析。  
-2. **ステップ**：  
-- データセットの読み込み。  
-- データをフィルタリングするSQLクエリ生成。  
-- クエリ実行と結果取得。  
-- 可視化と洞察の生成。  
-3. **リソース**：データセットアクセス、SQL機能。  
-4. **経験**：過去の結果を活用し将来の分析を改善。  
+#### 例：Travel AgentにおけるSQL活用  
+1. **ユーザーの好み収集**  
+```python
+class Travel_Agent:
+    def __init__(self):
+        self.user_preferences = {}
 
-#### 実践例：Travel AgentにおけるSQL活用  
-1. **ユーザーの好み収集** ```python
-   class Travel_Agent:
-       def __init__(self):
-           self.user_preferences = {}
+    def gather_preferences(self, preferences):
+        self.user_preferences = preferences
+```
+2. **SQLクエリ生成**  
+```python
+def generate_sql_query(table: str, preferences: dict) -> str:
+    # 簡易: 文字列埋め込み（本番はパラメータバインドでSQLインジェクション対策）
+    conditions = []
+    for key, value in preferences.items():
+        if isinstance(value, list):
+            # リスト型は ANY 相当に単純化（実装学習目的の簡略版）
+            joined = ",".join([str(v) for v in value])
+            conditions.append(f"{key} IN ({joined})")
+        else:
+            conditions.append(f"{key} = '{value}'")
+    where = " AND ".join(conditions) if conditions else "1=1"
+    return f"SELECT * FROM {table} WHERE {where};"
+```
+3. **SQLクエリ実行**  
+```python
+import sqlite3
+from contextlib import closing
 
-       def gather_preferences(self, preferences):
-           self.user_preferences = preferences
-   ```  
-2. **SQLクエリ生成** ```python
-   def generate_sql_query(table, preferences):
-       query = f"SELECT * FROM {table} WHERE "
-       conditions = []
-       for key, value in preferences.items():
-           conditions.append(f"{key}='{value}'")
-       query += " AND ".join(conditions)
-       return query
-   ```  
-3. **SQLクエリ実行** ```python
-   import sqlite3
+def execute_sql_query(query: str, database: str = "travel.db"):
+    with closing(sqlite3.connect(database)) as conn:
+        cur = conn.cursor()
+        cur.execute(query)
+        rows = cur.fetchall()
+    return rows
+```
+4. **推奨生成**  
+```python
+def generate_recommendations(preferences: dict):
+    flight_query = generate_sql_query("flights", preferences)
+    hotel_query = generate_sql_query("hotels", preferences)
+    attraction_query = generate_sql_query("attractions", preferences)
 
-   def execute_sql_query(query, database="travel.db"):
-       connection = sqlite3.connect(database)
-       cursor = connection.cursor()
-       cursor.execute(query)
-       results = cursor.fetchall()
-       connection.close()
-       return results
-   ```  
-4. **推奨生成** ```python
-   def generate_recommendations(preferences):
-       flight_query = generate_sql_query("flights", preferences)
-       hotel_query = generate_sql_query("hotels", preferences)
-       attraction_query = generate_sql_query("attractions", preferences)
-       
-       flights = execute_sql_query(flight_query)
-       hotels = execute_sql_query(hotel_query)
-       attractions = execute_sql_query(attraction_query)
-       
-       itinerary = {
-           "flights": flights,
-           "hotels": hotels,
-           "attractions": attractions
-       }
-       return itinerary
+    flights = execute_sql_query(flight_query)
+    hotels = execute_sql_query(hotel_query)
+    attractions = execute_sql_query(attraction_query)
 
-   travel_agent = Travel_Agent()
-   preferences = {
-       "destination": "Paris",
-       "dates": "2025-04-01 to 2025-04-10",
-       "budget": "moderate",
-       "interests": ["museums", "cuisine"]
-   }
-   travel_agent.gather_preferences(preferences)
-   itinerary = generate_recommendations(preferences)
-   print("Suggested Itinerary:", itinerary)
-   ```  
+    return {"flights": flights, "hotels": hotels, "attractions": attractions}
 
-#### SQLクエリ例  
-1. **フライトクエリ** ```sql
-   SELECT * FROM flights WHERE destination='Paris' AND dates='2025-04-01 to 2025-04-10' AND budget='moderate';
-   ```  
-2. **ホテルクエリ** ```sql
-   SELECT * FROM hotels WHERE destination='Paris' AND budget='moderate';
-   ```  
-3. **観光地クエリ** ```sql
-   SELECT * FROM attractions WHERE destination='Paris' AND interests='museums, cuisine';
-   ```  
+travel_agent = Travel_Agent()
+preferences = {
+    "destination": "Paris",
+    "dates": "2025-04-01_to_2025-04-10",  # 例: フォーマットはDBスキーマ前提で調整
+    "budget": "moderate",
+    "interests": ["museums", "cuisine"]
+}
+travel_agent.gather_preferences(preferences)
+itinerary = generate_recommendations(preferences)
+print("生成された旅程:", itinerary)
+```
 
 SQLをRetrieval-Augmented Generation（RAG）技術の一部として活用することで、Travel AgentのようなAIエージェントは関連データを動的に取得・活用し、正確かつパーソナライズされた推奨を提供できます。  
 
+#### SQLクエリ例 (Example SQL Queries)
+英語版の例示クエリを対応する形で掲載します。
+
+```sql
+-- フライト
+SELECT * FROM flights WHERE destination='Paris' AND dates='2025-04-01_to_2025-04-10' AND budget='moderate';
+
+-- ホテル
+SELECT * FROM hotels WHERE destination='Paris' AND budget='moderate';
+
+-- 観光地 (interests は正規化テーブルであれば JOIN へ変換推奨)
+SELECT * FROM attractions WHERE destination='Paris' AND interests='museums, cuisine';
+```
+
+
+### コード生成とメタ認知・SQLの統合
+この小節ではメタ認知で得た「何をどの順で改善するか」という抽象的判断を、再利用できるコード生成ステップと SQL による測定基盤へ写像して継続的改善ループを確立します。目的は判断を一度きりの思いつきで終わらせず、(1) ログ化 → (2) 条件別指標抽出 → (3) 自動パッチ提案 → (4) 指標比較 → (5) 受け入れ/却下 の形に固定化して再現性と監視性を高めることです。下の表は自動化対象と入力・指標・発火条件を要約したものです。
+
+| 目的 | 自動生成対象 | 主な入力 | 代表指標 | 典型トリガー |
+|------|--------------|----------|----------|--------------|
+| 取得精度向上 | 改訂SQLクエリ / 条件ビルダ | 失敗パターンログ, 条件別行数 | 重複率, 網羅性, 行数閾値 | 行数0/過多, 重複超過 |
+| 戦略検証 | 評価スクリプト / 集計コード | 実行履歴(journal) | 改善率, 再現性 | 指標停滞/退行 |
+| 応答品質改善 | プロンプト / テンプレ差分 | フィードバック要約 | 引用率, 嗜好反映率 | 引用欠落, 嗜好未反映 |
+| 安全性向上 | サニタイズ / 検証関数 | 例外ログ | 失敗率, 型整合率 | 例外頻発, 型不一致 |
+
+
 ### メタ認知の例  
+ここでは前段で定義した評価指標やログ化の仕組みをすでに読んでいることを前提に、抽象概念（振り返りループ）を具体的な動作手順へ写像する位置付けを採っています。評価指標と失敗パターンの説明を先に済ませることで例中の戦略切替理由が直感的に理解しやすくなります。  
 メタ認知の実装例を示すため、問題解決中に*自身の意思決定プロセスを振り返る*単純なエージェントを作成します。  
-この例では、エージェントがホテルの選択を最適化しようと試み、誤った選択や最適でない選択をした場合に自身の推論を評価し、戦略を調整します。  
-基本例として、価格と品質の組み合わせでホテルを選択しつつ、決定を「振り返り」、必要に応じて調整します。  
+この例では、エージェントがホテルの選択を最適化しようと試み、誤った選択や最適でない選択をした場合に自身の推論を評価し、戦略を調整します。基本例として、価格と品質の組み合わせでホテルを選択しつつ、決定を「振り返り」、必要に応じて調整します。  
 
 #### メタ認知の説明  
 1. **初期決定**：エージェントは品質の影響を理解せずに最も安いホテルを選択。  
 2. **振り返りと評価**：初期選択後、ユーザーフィードバックを用いてそのホテルが「悪い」選択かをチェック。品質が低すぎる場合、自身の推論を振り返る。  
 3. **戦略調整**：振り返りに基づき戦略を「最安値」から「最高品質」に切り替え、将来の意思決定を改善。  
 
-例：```python
+例：
+```python
+# === 手法ラベル凡例 ===
+# [計画] 戦略や手順を事前に定義/選択する部分
+# [メタ認知] 自身の過去判断を評価し戦略切替を行う部分
+# [自己修正型RAG] 取得→生成→評価→改良のループ要素（本例では取得/生成を簡略化）
+# [環境認識] 過去状態や履歴を内部構造に保持/参照する部分
+# [コード生成] 戦略分岐ロジックや改善アクションをコードとして組み立てる部分
+# [SQL構造化] （本例には登場しないが）条件ごとの行数・指標取得を行う層
+
 class HotelRecommendationAgent:
     def __init__(self):
-        self.previous_choices = []  # Stores the hotels chosen previously
-        self.corrected_choices = []  # Stores the corrected choices
-        self.recommendation_strategies = ['cheapest', 'highest_quality']  # Available strategies
+        # [環境認識] 過去に選んだホテル（戦略, 候補）
+        self.previous_choices = []
+        # [環境認識] 戦略調整後に再評価された選択
+        self.corrected_choices = []
+        # [計画] 利用可能な推奨戦略（事前に定義した戦略空間）
+        self.recommendation_strategies = ['cheapest', 'highest_quality']
 
-    def recommend_hotel(self, hotels, strategy):
-        """
-        Recommend a hotel based on the chosen strategy.
-        The strategy can either be 'cheapest' or 'highest_quality'.
-        """
+    def recommend_hotel(self, hotels, strategy: str):
+        """与えられた戦略（'cheapest' または 'highest_quality'）に基づき候補を1件選ぶ。 [計画][コード生成]
+        （戦略に応じた評価関数を分岐させる“手続き”をコード化）"""
         if strategy == 'cheapest':
             recommended = min(hotels, key=lambda x: x['price'])
         elif strategy == 'highest_quality':
             recommended = max(hotels, key=lambda x: x['quality'])
         else:
             recommended = None
+        # [環境認識] 戦略と結果を履歴に記録
         self.previous_choices.append((strategy, recommended))
         return recommended
 
     def reflect_on_choice(self):
-        """
-        Reflect on the last choice made and decide if the agent should adjust its strategy.
-        The agent considers if the previous choice led to a poor outcome.
-        """
+        """直近の選択を振り返り不満足なら戦略を切り替える。 [メタ認知]
+        （評価→判断→方針切替の小さいループ）"""
         if not self.previous_choices:
-            return "No choices made yet."
+            return "まだ選択がありません。"
 
         last_choice_strategy, last_choice = self.previous_choices[-1]
-        # Let's assume we have some user feedback that tells us whether the last choice was good or not
+        # [自己修正型RAG] 簡易フィードバック取得（実際はユーザー入力や外部評価に相当）
         user_feedback = self.get_user_feedback(last_choice)
 
         if user_feedback == "bad":
-            # Adjust strategy if the previous choice was unsatisfactory
+            # [メタ認知] 評価結果が不十分なら別の戦略へ切り替える（改善アクション選択）
             new_strategy = 'highest_quality' if last_choice_strategy == 'cheapest' else 'cheapest'
+            # [環境認識] 修正履歴に保存（後続分析・再学習の基盤）
             self.corrected_choices.append((new_strategy, last_choice))
-            return f"Reflecting on choice. Adjusting strategy to {new_strategy}."
+            return f"選択を振り返り、戦略を {new_strategy} に切り替えます。"
         else:
-            return "The choice was good. No need to adjust."
+            return "前回の選択は良好です。戦略変更は不要です。"
 
-    def get_user_feedback(self, hotel):
-        """
-        Simulate user feedback based on hotel attributes.
-        For simplicity, assume if the hotel is too cheap, the feedback is "bad".
-        If the hotel has quality less than 7, feedback is "bad".
-        """
+    def get_user_feedback(self, hotel: dict):
+    """ユーザーフィードバックを模倣する簡易ルールです。 [自己修正型RAG(簡略)]
+    役割:
+    - 取得 相当: すでに選択されたホテルの属性 (price, quality) を読むだけで外部検索は行っていません。
+    - 評価 相当: 閾値を下回る品質や極端な低価格を "bad" として改善トリガにします。
+    - 改良 相当: 実際の改良処理は reflect_on_choice 内で別の戦略へ切り替える処理として行われます。
+    この最小例は RAG の構造 (retrieve→generate→evaluate→revise) を教育目的で圧縮した形です。実運用では:
+    1. 外部データ源 / 検索 / ベクトルインデックスから候補取得（取得）
+    2. LLM やルールで多次元スコアリング（評価）
+    3. クエリ / プロンプト / 戦略関数を再生成（改良）
+    4. 評価ログや指標を永続保存し次回意思決定へ利用（環境認識）
+    へ拡張します。"""
         if hotel['price'] < 100 or hotel['quality'] < 7:
             return "bad"
         return "good"
 
-# Simulate a list of hotels (price and quality)
+
+# サンプル: 価格と品質を持つホテル候補リスト
 hotels = [
     {'name': 'Budget Inn', 'price': 80, 'quality': 6},
     {'name': 'Comfort Suites', 'price': 120, 'quality': 8},
     {'name': 'Luxury Stay', 'price': 200, 'quality': 9}
 ]
 
-# Create an agent
+# エージェント生成
 agent = HotelRecommendationAgent()
 
-# Step 1: The agent recommends a hotel using the "cheapest" strategy
+# Step 1: 最初は最安戦略 [計画 初期方針設定]
 recommended_hotel = agent.recommend_hotel(hotels, 'cheapest')
-print(f"Recommended hotel (cheapest): {recommended_hotel['name']}")
+print(f"初回推奨(cheapest): {recommended_hotel['name']}")
 
-# Step 2: The agent reflects on the choice and adjusts strategy if necessary
+# Step 2: 振り返りと必要に応じた戦略調整 [メタ認知 評価→方針再決定]
 reflection_result = agent.reflect_on_choice()
 print(reflection_result)
 
-# Step 3: The agent recommends again, this time using the adjusted strategy
+# Step 3: 調整後の戦略で再推奨 [自己修正型RAG 改良フェーズ再実行]
 adjusted_recommendation = agent.recommend_hotel(hotels, 'highest_quality')
-print(f"Adjusted hotel recommendation (highest_quality): {adjusted_recommendation['name']}")
-```  
+print(f"調整後推奨(highest_quality): {adjusted_recommendation['name']}")
+```
 
 #### エージェントのメタ認知能力  
-- 過去の選択や意思決定プロセスを評価。  
-- その振り返りに基づいて戦略を調整、すなわちメタ認知を実践。  
+ここまでの例は、過去の意思決定を整理して評価し、必要なら戦略を切り替えて次の結果を改善するための最小構成を示しています。目的は精緻な内省ではなく、効果の出る調整を再現可能な手順として固定することです。以下でその流れ（記録 → 評価 → 判断 → 改良 → 学習基盤化）を分解します。 
 
-これは内部フィードバックに基づき推論プロセスを調整可能なシンプルなメタ認知の形態です。  
+構造を分解すると次の流れになります。  
+1. 記録: `previous_choices` が（戦略, 結果）ペアを保存します（環境認識）。  
+2. 評価: `get_user_feedback` が閾値ルールで良否を返し改善トリガを生成します（自己修正型RAGの簡略評価）。  
+3. 判断: `reflect_on_choice` が評価結果を読み取り方針を維持するか別の戦略へ切り替えるかを選びます（メタ認知）。  
+4. 改良: 戦略を切り替えて再推薦し新しい結果を取得します（計画の再適用）。  
+5. 学習基盤化: 修正結果を `corrected_choices` に追記して将来の分析や統計化に備えます。  
 
-### 結論  
-メタ認知はAIエージェントの能力を大幅に向上させる強力なツールです。メタ認知を取り入れることで、
-プロセスを通じて、より知的で適応力があり効率的なエージェントを設計することができます。追加のリソースを活用して、AIエージェントにおけるメタ認知の魅力的な世界をさらに探求しましょう。  
+内部状態は次の二層に分かれます。  
+- 短期状態: 直近の選択（前回戦略とホテル）。  
+- 累積状態: すべての選択履歴と修正履歴。これにより「どの戦略が何回失敗し戦略変更に至ったか」といった頻度統計を後で算出できます。  
+
+失敗検出（bad 判定）は現状では単純閾値ですが、実運用では以下へ拡張します。  
+- 重み付き総合スコア: 多次元指標（価格 / 品質 / レビュー / 距離 など）を 0〜1 に正規化し、重要度を表す重みを掛けて足し合わせた合計値を用います（例: 総合 = 0.40*価格スコア + 0.35*品質 + 0.15*レビュー + 0.10*距離）。この方式を「重み付き合算」と呼び、指標間の重要度バランスを明示的に制御します。  
+- ペアワイズ比較: LLM に 2 つの候補を同時に提示し「どちらが目的（例: 快適さと費用対効果）により適しているか。その理由は何か」を返させ、勝者を記録して相対順位を構築します。これを複数組み合わせると安定したランキングを得ます。  
+- 戦略と結果のクロス集計: SQL で戦略と結果カテゴリ（例: good / bad や三段階満足度）の組み合わせ頻度を集計し、一定の不合格率や連続失敗回数が閾値を超えた際に「切り替え判定の基準値」（例: 連続失敗許容回数）を最近の実績に合わせて自動更新します。  
+
+改善アクションも単純な二択の単純切り替えから次のように段階化できます。  
+- 優先順位調整（例: 価格→品質→立地の重み配分を段階的に変更します）。  
+- クエリや取得条件を一時的に緩めて、ジャンルや価格帯の異なる候補も取得し、同質な候補に偏って局所的最適に陥る状況を避けます（候補の多様性確保）。  
+- 再ランキング基準の挿入（例: 快適度指標を追加して総合スコアを再計算します）。  
+
+観測→評価→調整のループをコードとして明示化する利点は次の通りです。  
+- 再現性: 同じ入力条件なら同じ改善手順を踏みます。  
+- 監視容易性: どの判定が何回改善を引き起こしたかを履歴から追跡できます。  
+- 拡張性: 評価器と戦略集合を差し替えてもフレームワーク部分を維持できます。  
+
+次の成熟段階の例を示します。  
+| 段階 | 評価手段 | 戦略集合 | 改善判定条件 | 追加で観測する指標 |
+|------|----------|----------|----------------|------------------|
+| 最小 (本例) | 閾値ルール | 二択 (最安 / 最高品質) | 不適判定 (bad) が発生 | 戦略変更回数 |
+| 拡張1 | 多次元重み付き総合スコア | 3～5 戦略 | 総合スコア差が目標閾値を下回る | 戦略別成功率 |
+| 拡張2 | LLM 二者比較 + ルール補助 | 動的生成（重み再最適化） | 改善率停滞が N 回連続 | 収束までの試行数 |
+| 拡張3 | A/B 試験 + 統計検定 + SQL 集計 | 逐次探索最適化（バンディット手法） | 統計的有意差を確認 | p値 / 後悔指標 (累積 regret) |
+
+※ 用語補足: 「多次元重み付き総合スコア」は各指標を 0〜1 に正規化し重みを掛けて合算した値です。  
+※ 「LLM 二者比較」は二つの候補を同時提示してどちらが要求に適合し理由は何かを回答させ順位を構築します。  
+※ 「逐次探索最適化（バンディット手法）」は試行ごとに学習しながら探索と活用の配分を調整して累積の後悔（本来得られた最良報酬との差）を最小化します。  
+※ 「後悔指標」は理想的に常に最良戦略を選んだ場合との差分を累積し、改善速度を評価する指標です。  
+
+このようにメタ認知は「高コストな完全内省」ではなく、小さく検証可能な改善手続きを積み上げる設計として具体化できます。  
+
+## 結論  
+本章で扱った要点は「観測→評価→判断→改良→記録」を明示し、改善ロジックを一度限りの試行錯誤で終わらせず再現可能な仕組みへ固定することです。メタ認知は抽象的な“内省”ではなく、測れる指標を用いて方針を継続的に調整する運用上の仕組みとして具体化します。  
+
+導入時はまず戦略と結果の履歴を蓄積し、重複率・網羅性・戦略変更回数・連続失敗回数など基本指標を計算し、連続不適などの閾値を超えたら戦略や重みを切り替えて効果を同じ指標で検証します。 成熟は「単純閾値と手動確認」→「重み付き総合スコアと自動切替」→「二者比較や A/B と統計的有意差および後悔指標による探索と活用の最適化」という段階で進めます。 立ち上げでは履歴構造追加→失敗分類→切替条件コード化→前後比較の順で最小ループを固め、成功は不適率低下・網羅性向上・重複率と連続失敗の縮減・平均取得コスト削減など複数指標の改善で判断します。
+
+これらを小さく回し、改善ロジック自体をコードとして資産化することで、安定性と適応性を同時に高められます。次章ではこれを本番運用へ拡張し、コスト・安全性・監視との統合を進めます。  
 ## 前のレッスン  
 [マルチエージェントデザインパターン](../08-multi-agent/README.md)  
 ## 次のレッスン  

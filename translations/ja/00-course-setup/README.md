@@ -7,131 +7,115 @@ CO_OP_TRANSLATOR_METADATA:
   "language_code": "ja"
 }
 -->
-GitHubアカウントでログインしてください。
+## 目的
+このドキュメントでは、コースのサンプルを実行できる状態にするために必要な環境変数の設定手順と、GitHub トークンや Azure 側の各種値の取得方法を順序立てて説明します。最初に GitHub トークンを用いた最小構成を準備し、そのあと Azure AI Foundry / Azure OpenAI / Azure Cognitive Search を利用する拡張設定へ進みます。
 
-`Fine-grained tokens` option on the left side of your screen.
+---
+## GitHub モデル (GitHub Inference) 利用のためのセットアップ
 
-Then select `Generate new token`.
+### Step 1: GitHub にサインインしてトークンを作成します
+1. GitHub にログインします。
+2. 左側メニュー (またはプロフィールメニュー) から 「Fine-grained tokens」 を開きます。
+3. 「Generate new token」 を選択します。
+4. 次の項目を入力・選択します。
+  - Name: 任意 (例: `ai-agents-course`)
+  - Expiration: 30 日程度を推奨します。
+  - Repository access / Scopes: Public Repositories（公開リポジトリのみで足りる場合）
+  - 追加権限: Permissions → Models → GitHub Models へのアクセスを許可します。
+5. 発行後、表示されたトークン文字列を必ずコピーします（後から再表示できないため安全な場所へ一時保存してください）。
 
 ![Generate Token](../../../00-course-setup/images/generate-token.png)
 
-You will be prompted to enter a name for your token, select the expiration date (Recommended: 30 Days), and select the scopes for your token (Public Repositories).
-
-It's also necessary to edit the permissions of this token: Permissions -> Models -> Allows access to GitHub Models
-
-Copy your new token that you have just created. You will now add this to your `.env` file included in this course. 
-
-
-### Step 2: Create Your `.env` File
-
-To create your `.env` ファイルで、以下のコマンドをターミナルで実行します。
+### Step 2: `.env` ファイルを作成してトークンを設定します
+以下のコマンドでサンプルの雛形を複製します。
 
 ```bash
 cp .env.example .env
 ```
 
-これにより、サンプルファイルがコピーされて `.env` in your directory and where you fill in the values for the environment variables.
+エディタで `.env` を開き、`GITHUB_TOKEN=` の行にコピーしたトークンを貼り付けて保存してください。ここまでで GitHub モデルを用いる最小構成が整います。動作確認として後続レッスンの簡単なサンプルを実行できるはずです。
 
-With your token copied, open the `.env` file in your favorite text editor and paste your token into the `GITHUB_TOKEN` field.
+---
+## Azure AI Foundry / Azure AI Agent Service 利用設定
 
-You should now be able to run the code samples of this course.
+### Step 1: Azure プロジェクトのエンドポイントを取得します
+まだ Azure AI Foundry プロジェクトを作成していない場合は次の公式ドキュメントを参照してプロジェクトを作成してください。
 
-## Set Up for Samples using Azure AI Foundry and Azure AI Agent Service
+- プロジェクトの概念と種類: [What is Azure AI Foundry? – Work in a project](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-azure-ai-foundry#work-in-an-azure-ai-foundry-project)
+- プロジェクト作成手順: [Create a project for Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/create-projects)
+- エンドポイント確認を含むクイックスタート: [Quickstart: Get started with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/quickstarts/get-started-code#set-up-your-environment)
 
-### Step 1: Retrieve Your Azure Project Endpoint
+プロジェクトを作成したら Azure AI Foundry ポータルで対象プロジェクトを開き、**Overview** ページ右上付近に表示される Project endpoint（例: `https://<resource>.services.ai.azure.com/api/projects/<project>`）をコピーしてください。この値を後続の `PROJECT_ENDPOINT` に設定します。
 
-
-Follow the steps to creating a hub and project in Azure AI Foundry found here: [Hub resources overview](https://learn.microsoft.com/en-us/azure/ai-foundry/concepts/ai-resources)
-
-
-Once you have created your project, you will need to retrieve the connection string for your project.
-
-This can be done by going to the **Overview** page of your project in the Azure AI Foundry portal.
+> 注意: 「Hub」ベースの旧来プロジェクトでは同じ形式のエンドポイントが表示されません。もし表示されない場合は上記ドキュメントの「Types of projects」節を参照し、Foundry プロジェクトへ切り替えてください。
 
 ![Project Connection String](../../../00-course-setup/images/project-endpoint.png)
 
-### Step 2: Create Your `.env` File
+### Step 2: `.env` にプロジェクト関連の値を追加します
+先ほど作成した `.env` を開き、以下のキーに値を記入してください。
 
-To create your `.env` ファイルが作成されます。ターミナルで以下のコマンドを実行してください。
+| 変数 | 設定する内容 | 補足 |
+|------|--------------|------|
+| PROJECT_ENDPOINT | プロジェクトの services.ai.azure.com ベースのエンドポイント URL | 末尾の `/api/projects/<name>` を含む URL です。|
+| AZURE_AI_PROJECT_NAME | プロジェクト名 | Overview 上部に表示されます。|
+| MODEL_DEPLOYMENT_NAME | 利用したいモデルのデプロイ名 | 例: `gpt-4o-mini`。未指定時はサンプル内既定を用いる場合があります。|
+
+### Step 3: Azure へサインインします
+API キーを直接埋め込む代わりに、Microsoft Entra ID を用いたキーレス接続を推奨します。まず OS に合わせて [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) をインストールしてください。インストール後、以下を実行します。
 
 ```bash
-cp .env.example .env
+az login --use-device-code
 ```
 
-これにより、サンプルファイルがコピーされて `.env` in your directory and where you fill in the values for the environment variables.
+ブラウザで認証を完了したら、必要に応じて `az account set --subscription <SUBSCRIPTION_ID>` で利用するサブスクリプションを選択してください。以降、DefaultAzureCredential などを用いたコードから認証が自動的に行われます。
 
-With your token copied, open the `.env` file in your favorite text editor and paste your token into the `PROJECT_ENDPOINT` field.
+> 参考: キーレス認証の考え方は [Keyless authentication](https://learn.microsoft.com/azure/developer/ai/keyless-connections) を参照してください。
 
-### Step 3: Sign in to Azure
+---
+## 追加の環境変数 (Azure Search / Azure OpenAI を使うサンプル用)
+Lesson 5 (Agentic RAG) など一部のサンプルでは Azure Cognitive Search や Azure OpenAI の追加設定が必要になります。必要になった段階で段階的に追加してください。以下は取得元ごとの整理です。
 
-As a security best practice, we'll use [keyless authentication](https://learn.microsoft.com/azure/developer/ai/keyless-connections?tabs=csharp%2Cazure-cli?WT.mc_id=academic-105485-koreyst) to authenticate to Azure OpenAI with Microsoft Entra ID. Before you can do so, you'll first need to install the **Azure CLI** per the [installation instructions](https://learn.microsoft.com/cli/azure/install-azure-cli?WT.mc_id=academic-105485-koreyst) for your operating system.
+### (A) プロジェクト Overview ページで確認する値
+- `AZURE_SUBSCRIPTION_ID` : Project details セクションを参照してください。
+- `AZURE_AI_PROJECT_NAME` : ページ上部に表示されています (既に設定済みの場合は再入力不要です)。
 
-Next, open a terminal and run `az login --use-device-code` to sign in to your Azure account.
+### (B) Management Center / Project properties
+- `AZURE_OPENAI_RESOURCE_GROUP` : Project properties で確認できます。
 
-Once you've logged in, select your subscription in the terminal.
+### (C) Models + Endpoints ページ
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` : Embedding モデル (例: `text-embedding-3-small`) の Deployment name。
+- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` : チャット用モデル (例: `gpt-4o-mini`) の Deployment name。
 
+### (D) Azure ポータル (AI Services リソース)
+- `AZURE_OPENAI_ENDPOINT` : Keys and Endpoint 画面で表示される Language APIs 用エンドポイント。
+- `AZURE_OPENAI_API_KEY` : 同じ画面の KEY1 または KEY2。
+- `AZURE_SEARCH_SERVICE_ENDPOINT` : Azure AI Search リソース Overview。
+- `AZURE_SEARCH_API_KEY` : Search リソースの Keys 画面で Primary または Secondary 管理キー。
 
-## Additional Environment Variables - Azure Search and Azure OpenAI 
+### (E) 公式 API バージョン情報ページ
+- `AZURE_OPENAI_API_VERSION` : [API version lifecycle](https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation#latest-ga-api-release) の Latest GA API release を参照してください。
 
-For the Agentic RAG Lesson - Lesson 5 - there are samples that use Azure Search and Azure OpenAI.
-
-If you want to run these samples, you will need to add the following environment variables to your `.env` file:
-
-### Overview Page (Project)
-
-- `AZURE_SUBSCRIPTION_ID` - Check **Project details** on the **Overview** page of your project.
-
-- `AZURE_AI_PROJECT_NAME` - Look at the top of the **Overview** page for your project.
-
-- `AZURE_OPENAI_SERVICE` - Find this in the **Included capabilities** tab for **Azure OpenAI Service** on the **Overview** page.
-
-### Management Center
-
-- `AZURE_OPENAI_RESOURCE_GROUP` - Go to **Project properties** on the **Overview** page of the **Management Center**.
-
-- `GLOBAL_LLM_SERVICE` - Under **Connected resources**, find the **Azure AI Services** connection name. If not listed, check the **Azure portal** under your resource group for the AI Services resource name.
-
-### Models + Endpoints Page
-
-- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` - Select your embedding model (e.g., `text-embedding-ada-002`) and note the **Deployment name** from the model details.
-
-- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` - Select your chat model (e.g., `gpt-4o-mini`) and note the **Deployment name** from the model details.
-
-### Azure Portal
-
-- `AZURE_OPENAI_ENDPOINT` - Look for **Azure AI services**, click on it, then go to **Resource Management**, **Keys and Endpoint**, scroll down to the "Azure OpenAI endpoints", and copy the one that says "Language APIs".
-
-- `AZURE_OPENAI_API_KEY` - From the same screen, copy KEY 1 or KEY 2.
-
-- `AZURE_SEARCH_SERVICE_ENDPOINT` - Find your **Azure AI Search** resource, click it, and see **Overview**.
-
-- `AZURE_SEARCH_API_KEY` - Then go to **Settings** and then **Keys** to copy the primary or secondary admin key.
-
-### External Webpage
-
-- `AZURE_OPENAI_API_VERSION` - Visit the [API version lifecycle](https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation#latest-ga-api-release) page under **Latest GA API release**.
-
-### Setup keyless authentication
-
-Rather than hardcode your credentials, we'll use a keyless connection with Azure OpenAI. To do so, we'll import `DefaultAzureCredential` and later call the `DefaultAzureCredential` 関数を使って認証情報を取得します。
+### (F) キーレス認証をコードで利用するサンプル
+資格情報を直接ハードコーディングせず、`DefaultAzureCredential` などをインポートして利用します。例:
 
 ```python
 from azure.identity import DefaultAzureCredential, InteractiveBrowserCredential
 ```
 
-## どこかで詰まったら？
+---
+## トラブルシューティング
+セットアップでつまずいた場合は、以下を順に確認してください。
+1. `.env` が作業ディレクトリ直下にあり、必要な値が空欄のままになっていないか確認してください。
+2. `az login` 済みで正しいサブスクリプションが選択されているか確認してください。
+3. モデル/デプロイ名のスペルが Azure ポータル上の表記と一致しているか確認してください。
+4. Search のインデックス作成サンプルで 401/403 が出る場合は API キーとエンドポイントの組み合わせを再確認してください。
+5. それでも解決しない場合は Issue 登録や学習用コミュニティ（Chat / Discussion）へ質問してください。
 
-セットアップの実行で問題があれば、ぜひ私たちの
+---
+## 次のレッスンへ進みます
+これでコースのコードサンプルを実行するための基本準備が完了しています。続いて AI エージェントの概要と代表的な活用例を学ぶレッスンへ進んでください。
 
-または
-
-に参加してください。
-
-## 次のレッスン
-
-これで、このコースのコードを実行する準備が整いました。AIエージェントの世界をもっと学んで楽しんでください！
-
-[AIエージェントの紹介とエージェントのユースケース](../01-intro-to-ai-agents/README.md)
+[AI エージェントの紹介とエージェントのユースケース](../01-intro-to-ai-agents/README.md)
 
 **免責事項**：  
-本書類はAI翻訳サービス「[Co-op Translator](https://github.com/Azure/co-op-translator)」を使用して翻訳されています。正確性の向上に努めておりますが、自動翻訳には誤りや不正確な部分が含まれる可能性があることをご了承ください。原文の言語によるオリジナル文書が権威ある情報源とみなされます。重要な情報については、専門の人間による翻訳を推奨します。本翻訳の利用により生じた誤解や誤訳について、当方は一切の責任を負いかねます。
+本書類は AI 翻訳サービス「[Co-op Translator](https://github.com/Azure/co-op-translator)」を利用して生成した訳文を基に人手で校正しています。可能な限り正確さを保つよう努めていますが、自動翻訳特有の不正確さが残る場合があります。重要な判断に用いる際は原文と専門家による確認を行ってください。本翻訳利用に伴う不利益については責任を負いかねます。

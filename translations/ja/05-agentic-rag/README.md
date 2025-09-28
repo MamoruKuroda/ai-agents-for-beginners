@@ -39,15 +39,13 @@ CO_OP_TRANSLATOR_METADATA:
 
 ## Agentic RAGとは？
 
-Agentic Retrieval-Augmented Generation（Agentic RAG）は、大規模言語モデル（LLM）が外部情報を参照しながら自律的に次の行動を計画する新たなAIパラダイムです。静的な「検索して読む」パターンとは異なり、Agentic RAGはLLMへの反復的な呼び出しを含み、その間にツールや関数の呼び出し、構造化された出力が挟まれます。システムは結果を評価し、クエリを改善し、必要に応じて追加のツールを呼び出し、このサイクルを満足のいく解決策が得られるまで続けます。この反復的な「メーカー・チェッカー」スタイルにより、正確性が向上し、誤ったクエリの処理が可能となり、高品質な結果が保証されます。
-
-システムは自らの推論プロセスを主体的に管理し、失敗したクエリを書き直したり、異なる検索手法を選択したり、Azure AI Searchのベクトル検索、SQLデータベース、カスタムAPIなど複数のツールを統合して最終回答を導き出します。Agenticシステムの特徴は、この推論プロセスを自律的に所有する能力にあります。従来のRAG実装は事前に決められた経路に依存しますが、Agenticシステムは得られた情報の質に基づいて自律的に手順を決定します。
+Agentic RAGは、従来のRAG（Retrieval-Augmented Generation）を発展させた新しいAIアプローチです。単純な「検索して読む」パターンではなく、LLMが**自律的に検索戦略を決定**し、**結果を評価**し、必要に応じて**追加の情報収集を行う反復的なプロセス**を特徴としています。このシステムは**自らの推論プロセスを主体的に管理**し、満足のいく解決策が得られるまでサイクルを続けます。
 
 ## Agentic Retrieval-Augmented Generation（Agentic RAG）の定義
 
-Agentic Retrieval-Augmented Generation（Agentic RAG）は、LLMが外部データソースから情報を取得するだけでなく、自律的に次のステップを計画するAI開発の新しいパラダイムです。静的な「検索して読む」パターンや厳密にスクリプト化されたプロンプトシーケンスとは異なり、Agentic RAGはLLMへの反復的な呼び出しループを含み、その間にツールや関数の呼び出し、構造化出力が挟まれます。システムは毎回得られた結果を評価し、クエリを改善すべきか判断し、必要に応じて追加のツールを呼び出し、満足のいく解決策が得られるまでこのサイクルを続けます。
+Agentic Retrieval-Augmented Generation（Agentic RAG）は、LLMが外部データソースから情報を取得するだけでなく、**自律的に次のステップを計画する**AI開発の新しいパラダイムです。**静的な「検索して読む」パターン**や厳密にスクリプト化されたプロンプトシーケンスとは異なり、Agentic RAGは**LLMへの反復的な呼び出しループ**を含み、その間にツールや関数の呼び出し、構造化出力が挟まれます。システムは毎回得られた結果を評価し、クエリを改善すべきか判断し、必要に応じて追加のツールを呼び出し、**満足のいく解決策が得られるまでこのサイクルを続けます**。
 
-この反復的な「メーカー・チェッカー」スタイルは、正確性の向上、誤ったクエリの処理（例：NL2SQLのような構造化データベースへのクエリ）、バランスの取れた高品質な結果の保証を目的としています。単に精巧に設計されたプロンプトチェーンに頼るのではなく、システムは推論プロセスを主体的に管理します。失敗したクエリを書き直し、異なる検索手法を選択し、Azure AI Searchのベクトル検索、SQLデータベース、カスタムAPIなど複数のツールを統合して最終回答を導き出します。これにより、過度に複雑なオーケストレーションフレームワークを必要とせず、「LLM呼び出し → ツール使用 → LLM呼び出し → …」という比較的シンプルなループで高度かつ根拠のある出力が得られます。
+この**反復的な「メーカー・チェッカー」スタイル**は、正確性の向上、誤ったクエリの処理（例：NL2SQLのような構造化データベースへのクエリ）、バランスの取れた高品質な結果の保証を目的としています。単に精巧に設計されたプロンプトチェーンに頼るのではなく、システムは**推論プロセスを主体的に管理**します。失敗したクエリを書き直し、異なる検索手法を選択し、Azure AI Searchのベクトル検索、SQLデータベース、カスタムAPIなど**複数のツールを統合**して最終回答を導き出します。これにより、過度に複雑なオーケストレーションフレームワークを必要とせず、**「LLM呼び出し → ツール使用 → LLM呼び出し → …」という比較的シンプルなループ**で高度かつ根拠のある出力が得られます。
 
 ![Agentic RAG Core Loop](../../../05-agentic-rag/images/agentic-rag-core-loop.png)
 
@@ -61,7 +59,8 @@ Agentic Retrieval-Augmented Generation（Agentic RAG）は、LLMが外部デー�
 2. Azure AI Searchを使って関連する競合データを特定する
 3. Azure SQL Databaseを使って過去の社内販売指標を相関分析する
 4. Azure OpenAI Serviceを通じて調査結果を統合し、一貫した戦略を策定する
-5. 戦略のギャップや矛盾を評価し、必要に応じて再度情報取得を行う
+5. 戦略のギャップや矛盾を評価し、必要に応じて再度情報取得を行う 
+
 これらすべてのステップは、クエリの洗練、情報源の選択、「満足」するまでの反復など、モデル自身が決定し、人間が事前にスクリプト化したものではありません。
 
 ## 反復ループ、ツール統合、メモリ
@@ -123,7 +122,34 @@ Agentic RAGは反復的な洗練と精度が求められるシナリオで特に
 
 ## まとめ
 
-Agentic RAGは、AIシステムが複雑で大量のデータを扱うタスクを処理する方法の自然な進化を示しています。反復的なインタラクションパターンを採用し、自律的にツールを選択し、クエリを洗練して高
+Agentic RAGは、AIシステムが複雑で大量のデータを扱うタスクを処理する方法の自然な進化を示しています。反復的なインタラクションパターンを採用し、自律的にツールを選択し、クエリを洗練して高品質な結果を得るまで続けることで、システムは静的なプロンプト追従を超えて、より適応的で文脈認識型の意思決定者へと発展します。人間が定義したインフラストラクチャと倫理ガイドラインによって制約されてはいますが、これらのエージェント機能により、企業とエンドユーザーの両方にとって、より豊かで動的、そして最終的により有用なAIインタラクションが可能になります。
+
+## 追加リソース
+
+- <a href="https://learn.microsoft.com/training/modules/use-own-data-azure-openai" target="_blank">Azure OpenAI ServiceでRetrieval Augmented Generation（RAG）を実装する：Azure OpenAI Serviceで独自データを使用する方法を学びます。このMicrosoft LearnモジュールはRAG実装の包括的なガイドを提供します</a>
+- <a href="https://learn.microsoft.com/azure/ai-studio/concepts/evaluation-approach-gen-ai" target="_blank">Azure AI Foundryでの生成AIアプリケーションの評価：この記事では、Agentic AIアプリケーションやRAGアーキテクチャを含む、公開データセット上でのモデルの評価と比較について説明します</a>
+- <a href="https://weaviate.io/blog/what-is-agentic-rag" target="_blank">What is Agentic RAG | Weaviate</a>
+- <a href="https://ragaboutit.com/agentic-rag-a-complete-guide-to-agent-based-retrieval-augmented-generation/" target="_blank">Agentic RAG: A Complete Guide to Agent-Based Retrieval Augmented Generation – News from generation RAG</a>
+- <a href="https://huggingface.co/learn/cookbook/agent_rag" target="_blank">Agentic RAG: turbocharge your RAG with query reformulation and self-query! Hugging Face Open-Source AI Cookbook</a>
+- <a href="https://youtu.be/aQ4yQXeB1Ss?si=2HUqBzHoeB5tR04U" target="_blank">Adding Agentic Layers to RAG</a>
+- <a href="https://www.youtube.com/watch?v=zeAyuLc_f3Q&t=244s" target="_blank">The Future of Knowledge Assistants: Jerry Liu</a>
+- <a href="https://www.youtube.com/watch?v=AOSjiXP1jmQ" target="_blank">How to Build Agentic RAG Systems</a>
+- <a href="https://ignite.microsoft.com/sessions/BRK102?source=sessions" target="_blank">Azure AI Foundry Agent Serviceを使用してAIエージェントをスケールする</a>
+
+### 学術論文
+
+- <a href="https://arxiv.org/abs/2303.17651" target="_blank">2303.17651 Self-Refine: Iterative Refinement with Self-Feedback</a>
+- <a href="https://arxiv.org/abs/2303.11366" target="_blank">2303.11366 Reflexion: Language Agents with Verbal Reinforcement Learning</a>
+- <a href="https://arxiv.org/abs/2305.11738" target="_blank">2305.11738 CRITIC: Large Language Models Can Self-Correct with Tool-Interactive Critiquing</a>
+- <a href="https://arxiv.org/abs/2501.09136" target="_blank">2501.09136 Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG</a>
+
+## 前のレッスン
+
+[ツール利用デザインパターン](../04-tool-use/README.md)
+
+## 次のレッスン
+
+[信頼できるAIエージェントの構築](../06-building-trustworthy-agents/README.md)
 
 **免責事項**：  
 本書類はAI翻訳サービス[Co-op Translator](https://github.com/Azure/co-op-translator)を使用して翻訳されています。正確性には努めておりますが、自動翻訳には誤りや不正確な部分が含まれる可能性があることをご了承ください。原文の言語によるオリジナルの文書が正式な情報源とみなされます。重要な情報については、専門の人間による翻訳を推奨します。本翻訳の使用により生じたいかなる誤解や解釈の相違についても、一切の責任を負いかねます。

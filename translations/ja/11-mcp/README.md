@@ -40,9 +40,10 @@ MCPは特にAIエージェント開発において、統一されたプロトコ
 1. **環境セットアップ**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate  # Windows の場合: venv\Scripts\activate
    pip install -r requirements.txt
    ```
+   上記の `requirements.txt` は この Lesson ディレクトリ直下 (`11-mcp/requirements.txt`) を指しています。Lesson 全体で必要な最小依存関係をまとめています。
 
 2. **Azureサービスの構成**
    - Azure Cognitive Searchリソースの作成
@@ -100,6 +101,8 @@ MCPは特にAIエージェント開発において、統一されたプロトコ
 
 ## Running the Sample
 
+このサンプルでは GitHub・ハッカソン・イベントの三つのエージェントを順番に連携させる直列型（Sequential）構成を採用しています。マルチエージェントの調整手法や他パターンとの比較、適用しやすい場面については `code_samples/github-mcp/README.md` で詳しく説明しています。
+
 詳細なセットアップ手順や追加情報は、[Github MCP Server Example README](./code_samples/github-mcp/README.md)を参照してください。
 
 1. MCPサーバーを起動：
@@ -113,8 +116,10 @@ MCPは特にAIエージェント開発において、統一されたプロトコ
    ```
 
 3. 統合をテスト：
+   次のような問い合わせを入力してください（どちらでも動作します）。
    ```
-   Example query: "Analyze repositories for username: <github_username>"
+   例: 「GitHubユーザー <github_username> のリポジトリを分析しておすすめを出してください」
+   Example (EN): "Analyze repositories for username: <github_username>"
    ```
 
 ## Troubleshooting
