@@ -398,6 +398,36 @@ FodyWeavers.xsd
 *.msi
 *.msix
 *.msm
+
+###############################################################################
+# Added for AI agents Python samples
+###############################################################################
+# Local python virtual envs
+myenv/
+.venv/
+venv/
+
+# Dotenv variations (機密値はコミット禁止)
+.env
+.env.*
+!.env.example
+
+# Chainlit local state
+.chainlit/
+
+# Jupyter/IPython
+*.ipynb_checkpoints
+
+# Cache / build
+__pycache__/
+*.pyc
+*.pyd
+*.egg-info/
+
+# OS / misc
+Thumbs.db
+ehthumbs.db
+
 *.msp
 
 # JetBrains Rider
@@ -405,6 +435,7 @@ FodyWeavers.xsd
 
 # Ignore all files in chroma_db directory
 05-agentic-rag/code_samples/chroma_db/
+translations/ja/05-agentic-rag/code_samples/chroma_db/
 
 # Ignore PNG files in the specified directory
 02-explore-agentic-frameworks/code_samples/*.png

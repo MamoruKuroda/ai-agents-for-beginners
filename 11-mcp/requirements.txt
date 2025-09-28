@@ -1,0 +1,10 @@
+# Lesson 11 specific requirements
+# This file is referenced by the lesson README (pip install -r requirements.txt)
+# It intentionally limits dependencies to what the sample code needs.
+python-dotenv
+requests
+chainlit
+semantic-kernel[azure,mcp]>=1.29.0
+azure-search-documents>=11.5.2
+mcp[cli]
+openai
